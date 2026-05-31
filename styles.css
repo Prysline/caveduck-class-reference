@@ -424,12 +424,15 @@ body[data-preview-bg="background"] .ccr-preview-stage {
 .ccr-detail-card {
   position: sticky;
   top: 85px;
+  max-height: calc(100vh - 104px);
+  overflow-y: auto;
   margin: 14px;
   padding: 14px;
   border: 1px solid var(--ccr-border);
   border-radius: 8px;
   background: var(--ccr-surface);
   box-shadow: var(--ccr-shadow);
+  scrollbar-width: thin;
 }
 
 .ccr-detail-head {
