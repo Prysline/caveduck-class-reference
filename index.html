@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Caveduck Class Reference</title>
+    <link rel="stylesheet" href="./assets/caveduck.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ccr-shell">
+      <header class="ccr-topbar">
+        <div class="ccr-title-block">
+          <h1>Caveduck Class Reference</h1>
+          <p>快速查找可替代 inline style 的既有 class</p>
+        </div>
+        <label class="ccr-search" for="classSearch">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="m21 21-4.35-4.35m1.35-5.15a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" />
+          </svg>
+          <input id="classSearch" type="search" placeholder="搜尋 class、屬性或 CSS 值" autocomplete="off" />
+        </label>
+        <div class="ccr-bg-control" aria-label="Preview background">
+          <button class="is-active" type="button" data-preview-bg="checker">
+            <span class="ccr-bg-swatch is-checker"></span>
+            <span>透明</span>
+          </button>
+          <button type="button" data-preview-bg="white">
+            <span class="ccr-bg-swatch is-white"></span>
+            <span>白</span>
+          </button>
+          <button type="button" data-preview-bg="background">
+            <span class="ccr-bg-swatch is-background"></span>
+            <span>背景</span>
+          </button>
+        </div>
+        <div class="ccr-status" aria-live="polite">
+          <strong id="resultCount">0</strong>
+          <span>classes</span>
+        </div>
+      </header>
+
+      <main class="ccr-workspace">
+        <aside class="ccr-sidebar" aria-label="Class categories">
+          <nav id="categoryTabs" class="ccr-tabs"></nav>
+        </aside>
+
+        <section class="ccr-results" aria-label="Class list">
+          <div class="ccr-list-head">
+            <span>Class</span>
+            <span>CSS summary</span>
+            <span>Preview</span>
+          </div>
+          <div id="classList" class="ccr-list" aria-live="polite"></div>
+        </section>
+
+        <aside class="ccr-detail" aria-label="Selected class preview">
+          <div class="ccr-detail-card">
+            <div class="ccr-detail-head">
+              <div>
+                <span class="ccr-muted">Selected</span>
+                <h2 id="selectedClass">Loading...</h2>
+              </div>
+              <button id="copySelected" class="ccr-icon-button" type="button" aria-label="Copy selected class">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M8 8V5.8c0-1 .8-1.8 1.8-1.8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H16" />
+                  <path d="M4 9.8C4 8.8 4.8 8 5.8 8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H5.8c-1 0-1.8-.8-1.8-1.8V9.8Z" />
+                </svg>
+              </button>
+            </div>
+            <div id="detailPreview" class="ccr-preview-stage"></div>
+            <dl class="ccr-meta">
+              <div>
+                <dt>Category</dt>
+                <dd id="selectedCategory">-</dd>
+              </div>
+              <div>
+                <dt>Declaration</dt>
+                <dd><code id="selectedCss">-</code></dd>
+              </div>
+              <div>
+                <dt>Variable values</dt>
+                <dd id="selectedVars">-</dd>
+              </div>
+            </dl>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div id="toast" class="ccr-toast" role="status" aria-live="polite">Copied</div>
+    <script src="./app.js"></script>
+  </body>
+</html>
