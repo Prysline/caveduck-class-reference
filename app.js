@@ -1,24 +1,39 @@
 const CSS_URL = "./assets/caveduck.css";
 const MAX_ROWS = 220;
+const FAMILY_LIMIT = 20;
 
 const categoryRules = [
   ["Layout", /^(container|static|fixed|absolute|relative|sticky|inset|top|right|bottom|left|z-|float|clear|isolate|object-|overflow|overscroll)/],
   ["Display", /^(block|inline|hidden|flex|grid|table|contents|flow-root|visible|collapse|sr-only|not-sr-only)/],
   ["Spacing", /^(m[trblxy]?|p[trblxy]?|space-[xy]|gap|scroll-m|scroll-p)-/],
-  ["Sizing", /^(w|h|min-w|min-h|max-w|max-h|size|aspect)-/],
-  ["Typography", /^(font|text|leading|tracking|list|placeholder|decoration|underline|overline|line-through|uppercase|lowercase|capitalize|normal-case|truncate|break|whitespace|align|antialiased|subpixel)/],
+  ["Sizing", /^(w|h|min-w|min-h|max-w|max-h|size|aspect|basis)-/],
+  ["Typography", /^(font|text|leading|tracking|list|placeholder|decoration|underline|overline|line-through|uppercase|lowercase|capitalize|normal-case|truncate|break|whitespace|align|antialiased|subpixel|prose|line-clamp)/],
   ["Color", /^(bg|from|via|to|fill|stroke|accent|caret|border|outline|ring|divide)-/],
   ["Effects", /^(shadow|opacity|mix-blend|blur|brightness|contrast|drop-shadow|grayscale|hue-rotate|invert|saturate|sepia|backdrop|filter)/],
   ["Border", /^(rounded|border|divide|outline|ring)-/],
   ["Transform", /^(transform|translate|scale|rotate|skew|origin)-/],
   ["Animation", /^(animate|transition|duration|ease|delay)-/],
-  ["Interaction", /^(cursor|select|resize|pointer-events|touch|snap|scroll|appearance|outline|focus|hover|active|disabled|group|peer)/],
+  ["Interaction", /^(cursor|select|resize|pointer-events|touch|snap|scroll|appearance|focus|hover|active|disabled|group|peer|aria)/],
+];
+
+const usageOrder = [
+  "All",
+  "常用版面",
+  "狀態欄常用",
+  "文字排版",
+  "色彩",
+  "裝飾",
+  "手機檢查",
+  "Caveduck 特有",
+  "易誤用",
 ];
 
 const state = {
   classes: [],
+  families: new Map(),
   varProviders: new Map(),
   category: "All",
+  usage: "All",
   query: "",
   selected: null,
   previewBg: "checker",
@@ -26,13 +41,12 @@ const state = {
 
 const els = {
   tabs: document.querySelector("#categoryTabs"),
+  usageTabs: document.querySelector("#usageTabs"),
   list: document.querySelector("#classList"),
   search: document.querySelector("#classSearch"),
   count: document.querySelector("#resultCount"),
   selectedClass: document.querySelector("#selectedClass"),
-  selectedCategory: document.querySelector("#selectedCategory"),
-  selectedCss: document.querySelector("#selectedCss"),
-  selectedVars: document.querySelector("#selectedVars"),
+  detailContent: document.querySelector("#detailContent"),
   detailPreview: document.querySelector("#detailPreview"),
   copySelected: document.querySelector("#copySelected"),
   previewBgButtons: document.querySelectorAll("button[data-preview-bg]"),
@@ -47,8 +61,9 @@ async function init() {
       if (!response.ok) throw new Error(`Unable to load ${CSS_URL}`);
       return response.text();
     });
-    state.classes = parseClasses(cssText);
+    state.classes = enrichClasses(parseClasses(cssText));
     state.varProviders = buildVariableProviders(state.classes);
+    state.families = buildFamilies(state.classes);
     state.selected = state.classes[0] || null;
     document.body.dataset.previewBg = state.previewBg;
     bindEvents();
@@ -76,6 +91,19 @@ function bindEvents() {
       els.previewBgButtons.forEach((item) => item.classList.toggle("is-active", item === button));
     });
   });
+
+  document.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-copy-value]");
+    if (copyButton) {
+      copyClass(copyButton.dataset.copyValue);
+      return;
+    }
+
+    const familyButton = event.target.closest("[data-select-class]");
+    if (familyButton) {
+      selectClass(familyButton.dataset.selectClass);
+    }
+  });
 }
 
 function parseClasses(cssText) {
@@ -86,25 +114,67 @@ function parseClasses(cssText) {
 
   walkRules(sheet.cssRules, (rule) => {
     if (!rule.selectorText || !rule.style) return;
-    const declaration = summarizeDeclaration(rule.style.cssText);
-    if (!declaration) return;
+    if (!summarizeDeclaration(rule.style.cssText)) return;
 
     extractClassNames(rule.selectorText).forEach((name) => {
       if (!isReferenceClass(name)) return;
       const existing = classMap.get(name);
       const cssText = existing ? mergeCssText(existing.cssText, rule.style.cssText) : rule.style.cssText;
-      const mergedDeclaration = summarizeDeclaration(cssText);
+      const declaration = summarizeDeclaration(cssText);
       classMap.set(name, {
         name,
-        declaration: mergedDeclaration,
+        declaration,
         cssText,
-        category: existing?.category || categorize(name, mergedDeclaration),
-        previewKind: previewKind(name, mergedDeclaration),
+        category: existing?.category || categorize(name, declaration),
       });
     });
   });
 
   return Array.from(classMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function enrichClasses(items) {
+  return items.map((item) => {
+    const meta = buildMetadata(item);
+    return {
+      ...item,
+      ...meta,
+      searchText: [
+        item.name,
+        item.declaration,
+        item.category,
+        meta.usageCategory,
+        meta.usageTags.join(" "),
+        meta.previewType,
+        meta.purpose,
+        meta.requirements.join(" "),
+        meta.riskTags.join(" "),
+        meta.familyKey,
+      ]
+        .join(" ")
+        .toLowerCase(),
+    };
+  });
+}
+
+function buildMetadata(item) {
+  const base = stripVariants(item.name);
+  const declarations = declarationMap(item.cssText);
+  const previewType = detectPreviewType(base, declarations, item.name);
+  const riskTags = detectRiskTags(base, declarations, item.name, previewType);
+  const usageTags = detectUsageTags(base, declarations, item.name, riskTags);
+  return {
+    previewType,
+    usageCategory: usageTags[0],
+    usageTags,
+    riskTags,
+    requirements: detectRequirements(base, declarations, item.name, previewType),
+    purpose: describePurpose(base, declarations, item.name, previewType),
+    exampleHtml: exampleHtmlFor(item.name, previewType, base),
+    inlineStyle: `style="${styleAttribute(item.cssText)}"`,
+    classSnippet: `class="${item.name}"`,
+    familyKey: familyKeyFor(base, item.name),
+  };
 }
 
 function walkRules(rules, visit) {
@@ -132,6 +202,7 @@ function cssUnescape(value) {
 
 function isReferenceClass(name) {
   if (!name || name.length > 96) return false;
+  if (name.endsWith(":")) return false;
   if (/^\d/.test(name)) return false;
   if (name.includes("://") || name.includes(".com")) return false;
   return /[A-Za-z_-]/.test(name);
@@ -151,8 +222,7 @@ function mergeCssText(first, second) {
   declarationMap(second).forEach((value, property) => {
     merged.set(property, value);
   });
-  return Array.from(merged, ([property, value]) => `${property}: ${value}`)
-    .join("; ");
+  return Array.from(merged, ([property, value]) => `${property}: ${value}`).join("; ");
 }
 
 function categorize(name, declaration) {
@@ -168,18 +238,146 @@ function stripVariants(name) {
   return parts[parts.length - 1].replace(/^!/, "").replace(/^-/, "");
 }
 
-function previewKind(name, declaration) {
-  const base = stripVariants(name);
-  if (/^(text|font|leading|tracking|underline|decoration|uppercase|lowercase|capitalize)/.test(base)) return "text";
-  if (/^(w|h|min|max|size|aspect|p|m|rounded|border|shadow|bg|opacity|rotate|scale|translate)/.test(base)) return "box";
-  if (/^(flex|grid|block|inline|hidden)/.test(base)) return "layout";
-  if (/color|background|border|shadow|width|height|padding|margin|transform|display/i.test(declaration)) return "box";
-  return "text";
+function detectPreviewType(base, declarations, name) {
+  if (/^(sr-only|hidden|invisible|collapse|pointer-events|cursor|select|resize|appearance|touch|snap|aria|group|peer)/.test(base)) return "no-preview";
+  if (/^(hover|focus|active|disabled):/.test(name) || /(^|:)hover:|(^|:)focus:|(^|:)active:/.test(name)) return "state-preview";
+  if (/^(top|right|bottom|left|inset|z-|absolute|relative|fixed|sticky|static)/.test(base) || hasAnyDeclaration(declarations, ["top", "right", "bottom", "left", "inset", "position", "z-index"])) return "position-preview";
+  if (/^(m[trblxy]?|p[trblxy]?|gap|space-[xy])-/.test(base) || hasDeclarationLike(declarations, /^(margin|padding|gap|row-gap|column-gap)/)) return "spacing-preview";
+  if (/^(bg|text|border|fill|stroke|accent|caret|from|via|to)-/.test(base) || hasDeclarationLike(declarations, /(color|background|fill|stroke)/)) return "color-preview";
+  if (/^(font|text|leading|tracking|truncate|line-clamp|whitespace|break|decoration|underline|uppercase|lowercase|capitalize|prose)/.test(base) || hasDeclarationLike(declarations, /(font|line-height|letter-spacing|text-overflow|white-space)/)) return "typography-preview";
+  if (/^(flex|grid|block|inline|table|contents|flow-root|container|overflow|object|aspect|w-|h-|min-|max-|basis)/.test(base) || hasDeclarationLike(declarations, /^(display|grid|flex|overflow|width|height|max-width|min-width|aspect-ratio)/)) return "layout-preview";
+  if (/^(shadow|opacity|blur|brightness|contrast|drop-shadow|grayscale|hue-rotate|invert|saturate|sepia|backdrop|filter|mix-blend|animate|transition|duration|ease|delay|rotate|scale|translate|skew)/.test(base) || hasDeclarationLike(declarations, /(box-shadow|filter|opacity|transform|rotate|scale|translate|animation|transition)/)) return "effect-preview";
+  return "no-preview";
+}
+
+function detectUsageTags(base, declarations, name, riskTags) {
+  const tags = [];
+  if (isCaveduckSpecific(name, declarations)) tags.push("Caveduck 特有");
+  if (isMobileRisk(base, declarations)) tags.push("手機檢查");
+  if (/^(font|text|leading|tracking|truncate|line-clamp|whitespace|break|prose|decoration|underline)/.test(base)) tags.push("文字排版");
+  if (/^(bg|text|border|fill|stroke|accent|caret|from|via|to)-/.test(base) || hasDeclarationLike(declarations, /(color|background)/)) tags.push("色彩");
+  if (/^(shadow|blur|backdrop|filter|opacity|rounded|border|gradient|animate|transition|rotate|scale|translate)/.test(base)) tags.push("裝飾");
+  if (/^(details|summary|border|rounded|bg|text|font|space|grid)/.test(base)) tags.push("狀態欄常用");
+  if (riskTags.length) tags.push("易誤用");
+  if (!tags.length) tags.push("常用版面");
+  return Array.from(new Set(tags));
+}
+
+function detectRiskTags(base, declarations, name, previewType) {
+  const tags = [];
+  if (/^(top|right|bottom|left|inset|z-)/.test(base)) tags.push("需要定位容器");
+  if (isMobileRisk(base, declarations)) tags.push("可能造成手機橫向爆版");
+  if (/^(truncate|text-ellipsis|line-clamp)/.test(base)) tags.push("需要 overflow 條件");
+  if (previewType === "no-preview") tags.push("可能沒有明顯預覽");
+  if (isCaveduckSpecific(name, declarations)) tags.push("Caveduck 特有");
+  return tags;
+}
+
+function detectRequirements(base, declarations, name, previewType) {
+  if (/^(top|right|bottom|left|inset|z-)/.test(base)) return ["需搭配 position: relative / absolute / fixed / sticky；單獨使用時可能沒有可見效果。"];
+  if (/^(truncate|text-ellipsis|line-clamp)/.test(base)) return ["需有寬度限制與 overflow 條件，文字超出時才看得出效果。"];
+  if (/^(gap|space-[xy])/.test(base)) return ["需套在 flex / grid 或有多個子元素的容器上。"];
+  if (/^(group|peer|aria|hover|focus|active|disabled)/.test(name) || previewType === "state-preview") return ["需要特定互動狀態、父層 class 或 ARIA/data 狀態才會觸發。"];
+  if (previewType === "no-preview") return ["此 class 偏行為或瀏覽器狀態，通常無法用單一靜態方塊完整預覽。"];
+  if (hasDeclarationLike(declarations, /var\(--tw-/)) return ["部分 Tailwind 組合變數需要搭配同系列 class 才會產生完整效果。"];
+  return ["可直接套用在 Caveduck 允許的 HTML 元素 class 屬性上。"];
+}
+
+function describePurpose(base, declarations, name, previewType) {
+  if (/^(top|right|bottom|left|inset)/.test(base)) return "控制元素相對定位容器的位移。";
+  if (/^z-/.test(base)) return "控制元素堆疊順序。";
+  if (/^(m[trblxy]?)-/.test(base)) return "控制元素外距，影響它和周圍內容的距離。";
+  if (/^(p[trblxy]?)-/.test(base)) return "控制元素內距，影響內容和邊界的距離。";
+  if (/^gap/.test(base)) return "控制 flex / grid 子元素之間的間距。";
+  if (/^font/.test(base)) return "控制字型家族、字重或字型相關設定。";
+  if (/^(text|leading|tracking|truncate|line-clamp|whitespace)/.test(base)) return "控制文字大小、顏色、行高、截斷或排版行為。";
+  if (/^(bg|from|via|to)/.test(base)) return "控制背景色、漸層或背景相關效果。";
+  if (/^(border|rounded|ring|outline)/.test(base)) return "控制邊框、圓角、外框或 focus ring 視覺。";
+  if (/^(flex|grid|block|inline|hidden|overflow|container|w-|h-|min-|max-)/.test(base)) return "控制版面、顯示方式、尺寸或溢出行為。";
+  if (/^(shadow|blur|backdrop|filter|opacity|animate|transition|rotate|scale|translate)/.test(base)) return "控制陰影、濾鏡、透明度、動畫或變形效果。";
+  if (isCaveduckSpecific(name, declarations)) return "Caveduck CSS 中的自訂 class 或設計 token，可用於貼近站內既有風格。";
+  return `${previewTypeLabel(previewType)} 類 utility，效果來自 CSS declaration。`;
+}
+
+function exampleHtmlFor(className, previewType, base) {
+  if (previewType === "position-preview") {
+    return `<div class="relative">\n  <div class="absolute ${className}">內容</div>\n</div>`;
+  }
+  if (previewType === "spacing-preview") return `<div class="${className}">內容</div>`;
+  if (previewType === "typography-preview") return `<p class="${className}">這是一段 Caveduck 文字內容</p>`;
+  if (previewType === "layout-preview") {
+    if (/^(flex|grid|gap|space)/.test(base)) return `<div class="${className}">\n  <span>項目</span>\n  <span>項目</span>\n</div>`;
+    return `<div class="${className}">內容</div>`;
+  }
+  return `<span class="${className}">內容</span>`;
+}
+
+function familyKeyFor(base, name) {
+  const normalized = base.replace(/^!/, "").replace(/^-/, "");
+  if (/^(top|right|bottom|left|inset)/.test(normalized)) return normalized.split("-")[0];
+  if (/^(font|leading|tracking|text|bg|border|rounded|shadow|opacity|blur|backdrop|filter|overflow|grid-cols|col|row|gap|space|w|h|min-w|min-h|max-w|max-h|p|m|px|py|pt|pr|pb|pl|mx|my|mt|mr|mb|ml)-/.test(normalized)) {
+    const parts = normalized.split("-");
+    if ((parts[0] === "bg" || parts[0] === "text" || parts[0] === "border") && /^(duck|dgray|background|primary|error)/.test(parts[1] || "")) return `${parts[0]}-${parts[1]}`;
+    if (parts[0] === "min" || parts[0] === "max") return `${parts[0]}-${parts[1]}`;
+    return parts[0];
+  }
+  return name.split(":").slice(-1)[0].split("-")[0];
+}
+
+function buildFamilies(items) {
+  const families = new Map();
+  items.forEach((item) => {
+    if (!families.has(item.familyKey)) families.set(item.familyKey, []);
+    families.get(item.familyKey).push(item);
+  });
+  return families;
+}
+
+function hasDeclarationLike(declarations, pattern) {
+  return Array.from(declarations.keys()).some((property) => pattern.test(property)) ||
+    Array.from(declarations.values()).some((value) => pattern.test(value));
+}
+
+function hasAnyDeclaration(declarations, names) {
+  return names.some((name) => declarations.has(name));
+}
+
+function isMobileRisk(base, declarations) {
+  return /^(min-w|max-w-none|w-\[|whitespace-nowrap|grid-cols-[5-9])/.test(base) ||
+    /width:\s*(3[2-9]\d|[4-9]\d\d)px|min-width|max-width:\s*none|white-space:\s*nowrap/.test(serializeDeclarations(declarations));
+}
+
+function isCaveduckSpecific(name, declarations) {
+  return /(duck|dgray|caveduck|official|bottom-bar|character-|wedding|snapshot|album-swiper|font-(pretendard|notoKr|racing|playfair|cormorant))/i.test(name) ||
+    /(duck|dgray|caveduck|wedding|font-cormorant|font-playfair|font-racing|font-pretendard)/i.test(serializeDeclarations(declarations));
+}
+
+function previewTypeLabel(type) {
+  return {
+    "position-preview": "定位",
+    "spacing-preview": "間距",
+    "color-preview": "色彩",
+    "typography-preview": "文字排版",
+    "layout-preview": "版面",
+    "effect-preview": "裝飾效果",
+    "state-preview": "互動狀態",
+    "no-preview": "行為",
+  }[type] || "CSS";
+}
+
+function serializeDeclarations(declarations) {
+  return Array.from(declarations, ([property, value]) => `${property}: ${value}`).join("; ");
+}
+
+function styleAttribute(cssText) {
+  return cssText.replace(/"/g, "&quot;");
 }
 
 function render() {
-  const counts = buildCategoryCounts();
-  renderTabs(counts);
+  const categoryCounts = buildCounts("category");
+  const usageCounts = buildCounts("usageCategory");
+  renderTabs(els.tabs, ["All", ...Array.from(categoryCounts.keys()).filter((key) => key !== "All").sort()], categoryCounts, "category");
+  renderTabs(els.usageTabs, usageOrder, usageCounts, "usage");
   const filtered = getFilteredClasses();
   els.count.textContent = filtered.length.toLocaleString();
   if (!filtered.includes(state.selected)) state.selected = filtered[0] || state.classes[0] || null;
@@ -187,26 +385,28 @@ function render() {
   renderDetail();
 }
 
-function buildCategoryCounts() {
+function buildCounts(key) {
   const counts = new Map([["All", state.classes.length]]);
-  state.classes.forEach((item) => counts.set(item.category, (counts.get(item.category) || 0) + 1));
+  state.classes.forEach((item) => {
+    const values = key === "usageCategory" ? item.usageTags : [item[key]];
+    values.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+  });
   return counts;
 }
 
-function renderTabs(counts) {
-  const categories = ["All", ...Array.from(counts.keys()).filter((key) => key !== "All").sort()];
-  els.tabs.innerHTML = categories
+function renderTabs(container, categories, counts, stateKey) {
+  container.innerHTML = categories
     .map((category) => {
-      const active = category === state.category ? " is-active" : "";
-      return `<button class="ccr-tab${active}" type="button" data-category="${escapeHtml(category)}">
-        <strong>${escapeHtml(category)}</strong><span>${counts.get(category)}</span>
+      const active = category === state[stateKey] ? " is-active" : "";
+      return `<button class="ccr-tab${active}" type="button" data-filter-key="${stateKey}" data-filter-value="${escapeHtml(category)}">
+        <strong>${escapeHtml(category)}</strong><span>${counts.get(category) || 0}</span>
       </button>`;
     })
     .join("");
 
-  els.tabs.querySelectorAll(".ccr-tab").forEach((tab) => {
+  container.querySelectorAll(".ccr-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      state.category = tab.dataset.category;
+      state[tab.dataset.filterKey] = tab.dataset.filterValue;
       render();
     });
   });
@@ -216,9 +416,9 @@ function getFilteredClasses() {
   const terms = state.query.split(/\s+/).filter(Boolean);
   return state.classes.filter((item) => {
     if (state.category !== "All" && item.category !== state.category) return false;
+    if (state.usage !== "All" && !item.usageTags.includes(state.usage)) return false;
     if (!terms.length) return true;
-    const haystack = `${item.name} ${item.category} ${item.declaration}`.toLowerCase();
-    return terms.every((term) => haystack.includes(term));
+    return terms.every((term) => item.searchText.includes(term));
   });
 }
 
@@ -240,14 +440,14 @@ function renderList(items, total) {
         return `<article class="ccr-row${selected}" data-class="${escapeHtml(item.name)}">
           <div class="ccr-class-cell">
             <code class="ccr-class-name">${escapeHtml(item.name)}</code>
-            <button class="ccr-copy" type="button" aria-label="Copy ${escapeHtml(item.name)}">
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M8 8V5.8c0-1 .8-1.8 1.8-1.8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H16"></path>
-                <path d="M4 9.8C4 8.8 4.8 8 5.8 8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H5.8c-1 0-1.8-.8-1.8-1.8V9.8Z"></path>
-              </svg>
+            <button class="ccr-copy" type="button" data-copy-value="${escapeHtml(item.name)}" aria-label="Copy ${escapeHtml(item.name)}">
+              ${copyIcon()}
             </button>
           </div>
-          <div class="ccr-summary">${escapeHtml(item.declaration)}</div>
+          <div class="ccr-summary">
+            <span>${escapeHtml(item.declaration)}</span>
+            <span class="ccr-row-tags">${tagMarkup([...item.usageTags.slice(0, 2), ...item.riskTags.slice(0, 1)])}</span>
+          </div>
           <div class="ccr-mini-preview">${previewMarkup(item)}</div>
         </article>`;
       })
@@ -255,10 +455,6 @@ function renderList(items, total) {
 
   els.list.querySelectorAll(".ccr-row").forEach((row) => {
     row.addEventListener("click", () => selectClass(row.dataset.class));
-    row.querySelector(".ccr-copy").addEventListener("click", (event) => {
-      event.stopPropagation();
-      copyClass(row.dataset.class);
-    });
   });
 }
 
@@ -272,11 +468,74 @@ function selectClass(name) {
 
 function renderDetail() {
   if (!state.selected) return;
-  els.selectedClass.textContent = state.selected.name;
-  els.selectedCategory.textContent = state.selected.category;
-  els.selectedCss.textContent = state.selected.declaration;
-  els.selectedVars.innerHTML = variableValueMarkup(state.selected);
-  els.detailPreview.innerHTML = previewMarkup(state.selected, true);
+  const item = state.selected;
+  els.selectedClass.textContent = item.name;
+  els.detailPreview.innerHTML = previewMarkup(item, true);
+  els.detailContent.innerHTML = `
+    <section class="ccr-detail-section">
+      <h3>用途</h3>
+      <p>${escapeHtml(item.purpose)}</p>
+      <div class="ccr-tag-list">${tagMarkup([item.previewType, item.category, ...item.usageTags, ...item.riskTags])}</div>
+    </section>
+    <section class="ccr-detail-section">
+      <h3>可複製使用</h3>
+      ${snippetBlock("Class", item.classSnippet)}
+      ${snippetBlock("Inline style", item.inlineStyle)}
+      ${snippetBlock("HTML example", item.exampleHtml)}
+    </section>
+    <section class="ccr-detail-section">
+      <h3>必要搭配</h3>
+      ${listMarkup(item.requirements)}
+    </section>
+    <section class="ccr-detail-section">
+      <h3>常見誤用</h3>
+      ${listMarkup(item.riskTags.length ? item.riskTags : ["目前未標記高風險條件。"])}
+    </section>
+    <section class="ccr-detail-section">
+      <h3>CSS declaration</h3>
+      <code class="ccr-code-block">${escapeHtml(item.cssText)}</code>
+    </section>
+    <section class="ccr-detail-section">
+      <h3>Variable values</h3>
+      <div class="ccr-var-list">${variableValueMarkup(item)}</div>
+    </section>
+    <section class="ccr-detail-section">
+      <h3>同系列</h3>
+      ${familyMarkup(item)}
+    </section>`;
+}
+
+function snippetBlock(label, value) {
+  return `<div class="ccr-snippet">
+    <span>${escapeHtml(label)}</span>
+    <code>${escapeHtml(value)}</code>
+    <button type="button" data-copy-value="${escapeHtml(value)}" aria-label="Copy ${escapeHtml(label)}">${copyIcon()}</button>
+  </div>`;
+}
+
+function listMarkup(items) {
+  return `<ul class="ccr-note-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function familyMarkup(item) {
+  const family = (state.families.get(item.familyKey) || []).slice(0, FAMILY_LIMIT);
+  if (family.length <= 1) return '<span class="ccr-muted-value">沒有其他同系列 class</span>';
+  const more = (state.families.get(item.familyKey) || []).length - family.length;
+  return `<div class="ccr-family-list">
+    ${family
+      .map(
+        (entry) => `<button class="${entry.name === item.name ? "is-active" : ""}" type="button" data-select-class="${escapeHtml(entry.name)}">
+          <code>${escapeHtml(entry.name)}</code>
+          <span data-copy-value="${escapeHtml(entry.name)}">${copyIcon()}</span>
+        </button>`
+      )
+      .join("")}
+    ${more > 0 ? `<p>另有 ${more} 筆，請用搜尋縮小範圍。</p>` : ""}
+  </div>`;
+}
+
+function tagMarkup(tags) {
+  return Array.from(new Set(tags.filter(Boolean))).map((tag) => `<span class="ccr-tag">${escapeHtml(tag)}</span>`).join("");
 }
 
 function variableValueMarkup(item) {
@@ -303,11 +562,7 @@ function variableValueMarkup(item) {
         return variableLine(name, `${providerText}${more}`, "provided by class");
       }
 
-      if (fallback !== null) {
-        const value = fallback || "empty fallback";
-        return variableLine(name, value, "fallback");
-      }
-
+      if (fallback !== null) return variableLine(name, fallback || "empty fallback", "fallback");
       return variableLine(name, "not defined", "unresolved");
     })
     .join("");
@@ -345,14 +600,33 @@ function variableLine(name, value, source) {
 }
 
 function previewMarkup(item, large = false) {
-  const label = item.previewKind === "text" ? "Sample text" : "Preview";
   const sizeClass = large ? " is-large" : "";
-  const kindClass = ` is-${item.previewKind}`;
-  const style = previewStyle(item);
-  return `<div class="ccr-preview-canvas${sizeClass}${kindClass}">
-    ${previewGuide(item)}
-    <div class="ccr-preview-subject" style="${escapeHtml(style)}">${escapeHtml(label)}</div>
+  return `<div class="ccr-preview-canvas${sizeClass} is-${item.previewType}">
+    ${previewContent(item)}
   </div>`;
+}
+
+function previewContent(item) {
+  const style = previewStyle(item);
+  if (item.previewType === "no-preview" || item.previewType === "state-preview") {
+    return `<div class="ccr-preview-note">${escapeHtml(item.previewType === "state-preview" ? "需要互動狀態" : "無靜態預覽")}</div>`;
+  }
+  if (item.previewType === "position-preview") {
+    return `<div class="ccr-preview-frame"><div class="ccr-preview-origin" aria-hidden="true"></div><div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div></div>`;
+  }
+  if (item.previewType === "spacing-preview") {
+    return `<div class="ccr-spacing-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Space</div></div>`;
+  }
+  if (item.previewType === "typography-preview") {
+    return `<p class="ccr-preview-subject ccr-text-sample" style="${escapeHtml(style)}">Caveduck text sample that can overflow</p>`;
+  }
+  if (item.previewType === "layout-preview") {
+    return `<div class="ccr-preview-subject ccr-layout-sample" style="${escapeHtml(style)}"><span>A</span><span>B</span><span>C</span></div>`;
+  }
+  if (item.previewType === "effect-preview") {
+    return `<div class="ccr-effect-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Effect</div></div>`;
+  }
+  return `<div class="ccr-preview-subject" style="${escapeHtml(style)}">Preview</div>`;
 }
 
 function previewStyle(item) {
@@ -374,17 +648,9 @@ function previewStyle(item) {
     "text-align: center",
   ];
 
-  if (item.previewKind === "text") {
-    base.push("min-width: 72px", "background-color: #ffffff");
-  }
-
-  if (item.previewKind === "layout") {
-    base.push("width: 86px", "gap: 6px");
-  }
-
-  if (hasOffsetDeclaration(declarations) && !declarations.has("position")) {
-    base.push("position: relative");
-  }
+  if (item.previewType === "typography-preview") base.push("width: 118px", "background-color: #ffffff");
+  if (item.previewType === "layout-preview") base.push("width: 126px", "gap: 6px");
+  if (item.previewType === "position-preview" && !declarations.has("position")) base.push("position: relative");
 
   const removes = removalKeysFor(declarations);
   const baseCss = base.filter((entry) => !removes.has(entry.split(":")[0])).join("; ");
@@ -409,12 +675,8 @@ function removalKeysFor(declarations) {
   declarations.forEach((_, property) => {
     keys.add(property);
     if (property === "background-color" || property === "background") keys.add("background-color");
-    if (property === "border" || /^border(-(width|style|inline|block|top|right|bottom|left))?$/.test(property)) {
-      keys.add("border");
-    }
-    if (property === "border-radius" || property.startsWith("border-") && property.endsWith("-radius")) {
-      keys.add("border-radius");
-    }
+    if (property === "border" || /^border(-(width|style|inline|block|top|right|bottom|left))?$/.test(property)) keys.add("border");
+    if (property === "border-radius" || (property.startsWith("border-") && property.endsWith("-radius"))) keys.add("border-radius");
     if (property === "padding" || property.startsWith("padding-")) keys.add("padding");
     if (property === "display") keys.add("display");
     if (property === "width") {
@@ -432,26 +694,16 @@ function removalKeysFor(declarations) {
   return keys;
 }
 
-function hasOffsetDeclaration(declarations) {
-  return ["top", "right", "bottom", "left", "inset", "inset-block", "inset-inline"].some((property) =>
-    declarations.has(property)
-  );
+function copyIcon() {
+  return `<svg aria-hidden="true" viewBox="0 0 24 24">
+    <path d="M8 8V5.8c0-1 .8-1.8 1.8-1.8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H16"></path>
+    <path d="M4 9.8C4 8.8 4.8 8 5.8 8h8.4c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H5.8c-1 0-1.8-.8-1.8-1.8V9.8Z"></path>
+  </svg>`;
 }
 
-function previewGuide(item) {
-  const cssText = item.cssText;
-  if (/margin|translate|rotate|scale|skew|top:|right:|bottom:|left:|position:/i.test(cssText)) {
-    return '<div class="ccr-preview-origin" aria-hidden="true"></div>';
-  }
-  if (/display:\s*(flex|grid)/i.test(cssText)) {
-    return '<span class="ccr-preview-dot"></span><span class="ccr-preview-dot"></span><span class="ccr-preview-dot"></span>';
-  }
-  return "";
-}
-
-async function copyClass(name) {
-  await navigator.clipboard.writeText(name);
-  els.toast.textContent = `Copied ${name}`;
+async function copyClass(value) {
+  await navigator.clipboard.writeText(value);
+  els.toast.textContent = `Copied ${value}`;
   els.toast.classList.add("is-visible");
   window.clearTimeout(copyClass.timer);
   copyClass.timer = window.setTimeout(() => els.toast.classList.remove("is-visible"), 1200);

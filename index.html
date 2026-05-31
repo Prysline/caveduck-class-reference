@@ -42,7 +42,14 @@
 
       <main class="ccr-workspace">
         <aside class="ccr-sidebar" aria-label="Class categories">
+          <div class="ccr-filter-block">
+            <h2>用途</h2>
+            <nav id="usageTabs" class="ccr-tabs ccr-tabs-compact"></nav>
+          </div>
+          <div class="ccr-filter-block">
+            <h2>CSS 分類</h2>
           <nav id="categoryTabs" class="ccr-tabs"></nav>
+          </div>
         </aside>
 
         <section class="ccr-results" aria-label="Class list">
@@ -69,20 +76,7 @@
               </button>
             </div>
             <div id="detailPreview" class="ccr-preview-stage"></div>
-            <dl class="ccr-meta">
-              <div>
-                <dt>Category</dt>
-                <dd id="selectedCategory">-</dd>
-              </div>
-              <div>
-                <dt>Declaration</dt>
-                <dd><code id="selectedCss">-</code></dd>
-              </div>
-              <div>
-                <dt>Variable values</dt>
-                <dd id="selectedVars">-</dd>
-              </div>
-            </dl>
+            <div id="detailContent"></div>
           </div>
         </aside>
       </main>
