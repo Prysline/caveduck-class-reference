@@ -17,6 +17,7 @@ const categoryRules = [
 
 const state = {
   classes: [],
+  varProviders: new Map(),
   category: "All",
   query: "",
   selected: null,
@@ -47,6 +48,7 @@ async function init() {
       return response.text();
     });
     state.classes = parseClasses(cssText);
+    state.varProviders = buildVariableProviders(state.classes);
     state.selected = state.classes[0] || null;
     document.body.dataset.previewBg = state.previewBg;
     bindEvents();
@@ -88,13 +90,16 @@ function parseClasses(cssText) {
     if (!declaration) return;
 
     extractClassNames(rule.selectorText).forEach((name) => {
-      if (!isReferenceClass(name) || classMap.has(name)) return;
+      if (!isReferenceClass(name)) return;
+      const existing = classMap.get(name);
+      const cssText = existing ? mergeCssText(existing.cssText, rule.style.cssText) : rule.style.cssText;
+      const mergedDeclaration = summarizeDeclaration(cssText);
       classMap.set(name, {
         name,
-        declaration,
-        cssText: rule.style.cssText,
-        category: categorize(name, declaration),
-        previewKind: previewKind(name, declaration),
+        declaration: mergedDeclaration,
+        cssText,
+        category: existing?.category || categorize(name, mergedDeclaration),
+        previewKind: previewKind(name, mergedDeclaration),
       });
     });
   });
@@ -138,6 +143,15 @@ function summarizeDeclaration(cssText) {
     .map((part) => part.trim())
     .filter(Boolean)
     .slice(0, 3)
+    .join("; ");
+}
+
+function mergeCssText(first, second) {
+  const merged = declarationMap(first);
+  declarationMap(second).forEach((value, property) => {
+    merged.set(property, value);
+  });
+  return Array.from(merged, ([property, value]) => `${property}: ${value}`)
     .join("; ");
 }
 
@@ -266,17 +280,68 @@ function renderDetail() {
 }
 
 function variableValueMarkup(item) {
-  const names = Array.from(item.cssText.matchAll(/var\((--[A-Za-z0-9_-]+)/g), (match) => match[1]);
-  const uniqueNames = Array.from(new Set(names));
-  if (!uniqueNames.length) return '<span class="ccr-muted-value">No variable reference</span>';
+  const references = extractVariableReferences(item.cssText);
+  if (!references.length) return '<span class="ccr-muted-value">No variable reference</span>';
 
+  const localDeclarations = declarationMap(item.cssText);
   const rootStyle = getComputedStyle(document.documentElement);
-  return uniqueNames
-    .map((name) => {
-      const value = rootStyle.getPropertyValue(name).trim() || "not defined";
-      return `<code class="ccr-var-value">${escapeHtml(name)}: ${escapeHtml(value)}</code>`;
+  return references
+    .map(({ name, fallback }) => {
+      const localValue = localDeclarations.get(name);
+      if (localValue) return variableLine(name, localValue, "this class");
+
+      const rootValue = rootStyle.getPropertyValue(name).trim();
+      if (rootValue) return variableLine(name, rootValue, ":root");
+
+      const providers = (state.varProviders.get(name) || []).filter((provider) => provider.name !== item.name);
+      if (providers.length) {
+        const providerText = providers
+          .slice(0, 3)
+          .map((provider) => `${provider.name} = ${provider.value}`)
+          .join("; ");
+        const more = providers.length > 3 ? `; +${providers.length - 3} more` : "";
+        return variableLine(name, `${providerText}${more}`, "provided by class");
+      }
+
+      if (fallback !== null) {
+        const value = fallback || "empty fallback";
+        return variableLine(name, value, "fallback");
+      }
+
+      return variableLine(name, "not defined", "unresolved");
     })
     .join("");
+}
+
+function buildVariableProviders(items) {
+  const providers = new Map();
+  items.forEach((item) => {
+    declarationMap(item.cssText).forEach((value, property) => {
+      if (!property.startsWith("--")) return;
+      if (!providers.has(property)) providers.set(property, []);
+      providers.get(property).push({ name: item.name, value });
+    });
+  });
+  return providers;
+}
+
+function extractVariableReferences(cssText) {
+  const references = new Map();
+  const regex = /var\((--[A-Za-z0-9_-]+)(?:,([^)]*))?\)/g;
+  let match;
+  while ((match = regex.exec(cssText))) {
+    if (!references.has(match[1])) {
+      references.set(match[1], {
+        name: match[1],
+        fallback: match[2] === undefined ? null : match[2].trim(),
+      });
+    }
+  }
+  return Array.from(references.values());
+}
+
+function variableLine(name, value, source) {
+  return `<code class="ccr-var-value"><span>${escapeHtml(name)}:</span> ${escapeHtml(value)} <em>${escapeHtml(source)}</em></code>`;
 }
 
 function previewMarkup(item, large = false) {

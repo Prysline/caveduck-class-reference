@@ -515,8 +515,20 @@ body[data-preview-bg="background"] .ccr-preview-stage {
 }
 
 .ccr-var-value {
-  display: block;
+  display: grid;
+  gap: 2px;
   padding: 4px 0;
+}
+
+.ccr-var-value span {
+  font-weight: 700;
+}
+
+.ccr-var-value em {
+  color: var(--ccr-faint);
+  font-family: Pretendard, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-style: normal;
 }
 
 .ccr-muted-value {
