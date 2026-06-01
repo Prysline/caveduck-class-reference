@@ -535,12 +535,12 @@ function renderList(items, total, totalPages) {
 
 function renderCompareList(items, start, end, total, totalPages) {
   els.list.innerHTML =
-    `<div class="ccr-compare-list">
-      ${items.map(compareRowMarkup).join("")}
+    `<div class="ccr-compare-board ${compareBoardClass(items)}">
+      ${items.map(compareCardMarkup).join("")}
     </div>` + paginationMarkup(start, end, total, totalPages);
 
-  els.list.querySelectorAll(".ccr-compare-row").forEach((row) => {
-    row.addEventListener("click", () => selectClass(row.dataset.class));
+  els.list.querySelectorAll(".ccr-compare-card").forEach((card) => {
+    card.addEventListener("click", () => selectClass(card.dataset.class));
   });
 
   els.list.querySelectorAll("[data-page-action]").forEach((button) => {
@@ -551,27 +551,30 @@ function renderCompareList(items, start, end, total, totalPages) {
   });
 }
 
-function compareRowMarkup(item) {
+function compareCardMarkup(item) {
   const selected = item === state.selected ? " is-selected" : "";
   const value = positionValueLabel(item) || sizeValueLabel(item) || "";
-  return `<article class="ccr-compare-row${selected}" data-class="${escapeHtml(item.name)}">
-    <div class="ccr-compare-meta">
-      <div class="ccr-class-cell">
-        <code class="ccr-class-name">${escapeHtml(item.name)}</code>
-        <button class="ccr-copy" type="button" data-copy-value="${escapeHtml(item.name)}" aria-label="Copy ${escapeHtml(item.name)}">
-          ${copyIcon()}
-        </button>
-      </div>
-      <div class="ccr-summary">
-        <span>${escapeHtml(item.declaration)}</span>
-        ${calcSummaryMarkup(item)}
-      </div>
+  return `<article class="ccr-compare-card${selected}" data-class="${escapeHtml(item.name)}">
+    <div class="ccr-compare-card-head">
+      <code class="ccr-class-name">${escapeHtml(item.name)}</code>
+      <button class="ccr-copy" type="button" data-copy-value="${escapeHtml(item.name)}" aria-label="Copy ${escapeHtml(item.name)}">
+        ${copyIcon()}
+      </button>
     </div>
-    <div class="ccr-compare-preview ${comparePreviewClass(item)}">
+    <div class="ccr-compare-card-preview ${comparePreviewClass(item)}">
       ${comparePreviewMarkup(item)}
       ${value ? `<span class="ccr-box-value">${escapeHtml(value)}</span>` : ""}
     </div>
+    <div class="ccr-compare-card-summary">
+      <span>${escapeHtml(item.declaration)}</span>
+      ${calcSummaryMarkup(item)}
+    </div>
   </article>`;
+}
+
+function compareBoardClass(items) {
+  const selected = items.includes(state.selected) ? state.selected : items[0];
+  return selected ? comparePreviewClass(selected) : "is-horizontal";
 }
 
 function selectClass(name) {
