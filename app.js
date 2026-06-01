@@ -1,5 +1,5 @@
 const CSS_URL = "./assets/caveduck.css";
-const MAX_ROWS = 220;
+const PAGE_SIZE = 80;
 const FAMILY_LIMIT = 20;
 
 const categoryRules = [
@@ -34,6 +34,8 @@ const state = {
   varProviders: new Map(),
   category: "All",
   usage: "All",
+  page: 1,
+  viewMode: "classes",
   query: "",
   selected: null,
   previewBg: "checker",
@@ -50,6 +52,8 @@ const els = {
   detailPreview: document.querySelector("#detailPreview"),
   copySelected: document.querySelector("#copySelected"),
   previewBgButtons: document.querySelectorAll("button[data-preview-bg]"),
+  viewButtons: document.querySelectorAll("button[data-view-mode]"),
+  viewLabel: document.querySelector("#viewLabel"),
   toast: document.querySelector("#toast"),
 };
 
@@ -77,6 +81,8 @@ async function init() {
 function bindEvents() {
   els.search.addEventListener("input", (event) => {
     state.query = event.target.value.trim().toLowerCase();
+    state.page = 1;
+    state.viewMode = "classes";
     render();
   });
 
@@ -92,6 +98,14 @@ function bindEvents() {
     });
   });
 
+  els.viewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.viewMode = button.dataset.viewMode;
+      state.page = 1;
+      render();
+    });
+  });
+
   document.addEventListener("click", (event) => {
     const copyButton = event.target.closest("[data-copy-value]");
     if (copyButton) {
@@ -101,7 +115,16 @@ function bindEvents() {
 
     const familyButton = event.target.closest("[data-select-class]");
     if (familyButton) {
-      selectClass(familyButton.dataset.selectClass);
+      state.selected = state.classes.find((item) => item.name === familyButton.dataset.selectClass) || state.selected;
+      state.viewMode = "family";
+      state.page = 1;
+      render();
+      return;
+    }
+
+    const tagButton = event.target.closest("[data-tag-value]");
+    if (tagButton) {
+      applyTagFilter(tagButton.dataset.tagValue);
     }
   });
 }
@@ -241,7 +264,8 @@ function stripVariants(name) {
 function detectPreviewType(base, declarations, name) {
   if (/^(sr-only|hidden|invisible|collapse|pointer-events|cursor|select|resize|appearance|touch|snap|aria|group|peer)/.test(base)) return "no-preview";
   if (/^(hover|focus|active|disabled):/.test(name) || /(^|:)hover:|(^|:)focus:|(^|:)active:/.test(name)) return "state-preview";
-  if (/^(top|right|bottom|left|inset|z-|absolute|relative|fixed|sticky|static)/.test(base) || hasAnyDeclaration(declarations, ["top", "right", "bottom", "left", "inset", "position", "z-index"])) return "position-preview";
+  if (/^(duration|transition|delay|ease)-/.test(base)) return "no-preview";
+  if (/^(top|right|bottom|left|inset|z-|absolute|relative|fixed|sticky|static|translate|rotate|scale|skew|transform)/.test(base) || hasAnyDeclaration(declarations, ["top", "right", "bottom", "left", "inset", "position", "z-index", "translate", "rotate", "scale", "transform"])) return "position-preview";
   if (/^(m[trblxy]?|p[trblxy]?|gap|space-[xy])-/.test(base) || hasDeclarationLike(declarations, /^(margin|padding|gap|row-gap|column-gap)/)) return "spacing-preview";
   if (/^(bg|text|border|fill|stroke|accent|caret|from|via|to)-/.test(base) || hasDeclarationLike(declarations, /(color|background|fill|stroke)/)) return "color-preview";
   if (/^(font|text|leading|tracking|truncate|line-clamp|whitespace|break|decoration|underline|uppercase|lowercase|capitalize|prose)/.test(base) || hasDeclarationLike(declarations, /(font|line-height|letter-spacing|text-overflow|white-space)/)) return "typography-preview";
@@ -378,10 +402,14 @@ function render() {
   const usageCounts = buildCounts("usageCategory");
   renderTabs(els.tabs, ["All", ...Array.from(categoryCounts.keys()).filter((key) => key !== "All").sort()], categoryCounts, "category");
   renderTabs(els.usageTabs, usageOrder, usageCounts, "usage");
-  const filtered = getFilteredClasses();
+  const filtered = getVisibleClasses();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (state.page > totalPages) state.page = totalPages;
   els.count.textContent = filtered.length.toLocaleString();
   if (!filtered.includes(state.selected)) state.selected = filtered[0] || state.classes[0] || null;
-  renderList(filtered.slice(0, MAX_ROWS), filtered.length);
+  renderViewControls(filtered.length);
+  const start = (state.page - 1) * PAGE_SIZE;
+  renderList(filtered.slice(start, start + PAGE_SIZE), filtered.length, totalPages);
   renderDetail();
 }
 
@@ -407,6 +435,8 @@ function renderTabs(container, categories, counts, stateKey) {
   container.querySelectorAll(".ccr-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       state[tab.dataset.filterKey] = tab.dataset.filterValue;
+      state.page = 1;
+      state.viewMode = "classes";
       render();
     });
   });
@@ -422,16 +452,33 @@ function getFilteredClasses() {
   });
 }
 
-function renderList(items, total) {
+function getVisibleClasses() {
+  if (state.viewMode !== "family") return getFilteredClasses();
+  const key = state.selected?.familyKey;
+  if (!key) return [];
+  return state.families.get(key) || [];
+}
+
+function renderViewControls(total) {
+  els.viewButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.viewMode === state.viewMode);
+  });
+
+  if (state.viewMode === "family" && state.selected) {
+    els.viewLabel.textContent = `${state.selected.familyKey} 同系列：${total.toLocaleString()} classes`;
+    return;
+  }
+  els.viewLabel.textContent = "";
+}
+
+function renderList(items, total, totalPages) {
   if (!items.length) {
     els.list.innerHTML = '<div class="ccr-empty">找不到符合條件的 class</div>';
     return;
   }
 
-  const limitNote =
-    total > MAX_ROWS
-      ? `<div class="ccr-empty">顯示前 ${MAX_ROWS} 筆；請輸入更精確的搜尋字串縮小範圍。</div>`
-      : "";
+  const start = (state.page - 1) * PAGE_SIZE + 1;
+  const end = Math.min(state.page * PAGE_SIZE, total);
 
   els.list.innerHTML =
     items
@@ -446,15 +493,23 @@ function renderList(items, total) {
           </div>
           <div class="ccr-summary">
             <span>${escapeHtml(item.declaration)}</span>
-            <span class="ccr-row-tags">${tagMarkup([...item.usageTags.slice(0, 2), ...item.riskTags.slice(0, 1)])}</span>
+            ${calcSummaryMarkup(item)}
+            <span class="ccr-row-tags">${tagMarkup([...item.usageTags.slice(0, 2), ...item.riskTags.slice(0, 1)], true)}</span>
           </div>
           <div class="ccr-mini-preview">${previewMarkup(item)}</div>
         </article>`;
       })
-      .join("") + limitNote;
+      .join("") + paginationMarkup(start, end, total, totalPages);
 
   els.list.querySelectorAll(".ccr-row").forEach((row) => {
     row.addEventListener("click", () => selectClass(row.dataset.class));
+  });
+
+  els.list.querySelectorAll("[data-page-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.page += button.dataset.pageAction === "next" ? 1 : -1;
+      render();
+    });
   });
 }
 
@@ -475,13 +530,7 @@ function renderDetail() {
     <section class="ccr-detail-section">
       <h3>用途</h3>
       <p>${escapeHtml(item.purpose)}</p>
-      <div class="ccr-tag-list">${tagMarkup([item.previewType, item.category, ...item.usageTags, ...item.riskTags])}</div>
-    </section>
-    <section class="ccr-detail-section">
-      <h3>可複製使用</h3>
-      ${snippetBlock("Class", item.classSnippet)}
-      ${snippetBlock("Inline style", item.inlineStyle)}
-      ${snippetBlock("HTML example", item.exampleHtml)}
+      <div class="ccr-tag-list">${tagMarkup([item.previewType, item.category, ...item.usageTags, ...item.riskTags], true)}</div>
     </section>
     <section class="ccr-detail-section">
       <h3>必要搭配</h3>
@@ -492,8 +541,12 @@ function renderDetail() {
       ${listMarkup(item.riskTags.length ? item.riskTags : ["目前未標記高風險條件。"])}
     </section>
     <section class="ccr-detail-section">
-      <h3>CSS declaration</h3>
+      <div class="ccr-section-heading">
+        <h3>CSS declaration</h3>
+        <button class="ccr-section-copy" type="button" data-copy-value="${escapeHtml(item.cssText)}" aria-label="Copy CSS declaration">${copyIcon()}</button>
+      </div>
       <code class="ccr-code-block">${escapeHtml(item.cssText)}</code>
+      ${calcDetailMarkup(item)}
     </section>
     <section class="ccr-detail-section">
       <h3>Variable values</h3>
@@ -505,16 +558,20 @@ function renderDetail() {
     </section>`;
 }
 
-function snippetBlock(label, value) {
-  return `<div class="ccr-snippet">
-    <span>${escapeHtml(label)}</span>
-    <code>${escapeHtml(value)}</code>
-    <button type="button" data-copy-value="${escapeHtml(value)}" aria-label="Copy ${escapeHtml(label)}">${copyIcon()}</button>
-  </div>`;
-}
-
 function listMarkup(items) {
   return `<ul class="ccr-note-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function paginationMarkup(start, end, total, totalPages) {
+  if (totalPages <= 1) return "";
+  return `<div class="ccr-pagination">
+    <span>${start.toLocaleString()}-${end.toLocaleString()} / ${total.toLocaleString()}</span>
+    <div>
+      <button type="button" data-page-action="prev" ${state.page === 1 ? "disabled" : ""}>Prev</button>
+      <strong>${state.page} / ${totalPages}</strong>
+      <button type="button" data-page-action="next" ${state.page === totalPages ? "disabled" : ""}>Next</button>
+    </div>
+  </div>`;
 }
 
 function familyMarkup(item) {
@@ -534,8 +591,34 @@ function familyMarkup(item) {
   </div>`;
 }
 
-function tagMarkup(tags) {
-  return Array.from(new Set(tags.filter(Boolean))).map((tag) => `<span class="ccr-tag">${escapeHtml(tag)}</span>`).join("");
+function tagMarkup(tags, clickable = false) {
+  return Array.from(new Set(tags.filter(Boolean)))
+    .map((tag) => {
+      if (!clickable) return `<span class="ccr-tag">${escapeHtml(tag)}</span>`;
+      return `<button class="ccr-tag" type="button" data-tag-value="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
+    })
+    .join("");
+}
+
+function applyTagFilter(tag) {
+  const categories = new Set(state.classes.map((item) => item.category));
+  state.page = 1;
+  state.viewMode = "classes";
+  if (categories.has(tag)) {
+    state.category = tag;
+    state.usage = "All";
+    state.query = "";
+  } else if (usageOrder.includes(tag)) {
+    state.usage = tag;
+    state.category = "All";
+    state.query = "";
+  } else {
+    state.category = "All";
+    state.usage = "All";
+    state.query = tag.toLowerCase();
+  }
+  els.search.value = state.query;
+  render();
 }
 
 function variableValueMarkup(item) {
@@ -596,37 +679,229 @@ function extractVariableReferences(cssText) {
 }
 
 function variableLine(name, value, source) {
-  return `<code class="ccr-var-value"><span>${escapeHtml(name)}:</span> ${escapeHtml(value)} <em>${escapeHtml(source)}</em></code>`;
+  const swatch = colorSwatch(value);
+  return `<code class="ccr-var-value"><span>${escapeHtml(name)}:</span> <span class="ccr-var-main">${swatch}${escapeHtml(value)}</span> <em>${escapeHtml(source)}</em></code>`;
+}
+
+function colorSwatch(value) {
+  const color = colorValue(value);
+  if (!color) return "";
+  return `<i class="ccr-color-swatch" style="background-color: ${escapeHtml(color)}"></i>`;
+}
+
+function colorValue(value) {
+  const trimmed = String(value).trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) return trimmed;
+  if (/^(rgb|rgba|hsl|hsla|oklch|oklab|color-mix)\(/i.test(trimmed)) return trimmed;
+  return "";
+}
+
+function calcSummaryMarkup(item) {
+  const results = buildCalcResults(item).filter((result) => result.result);
+  if (!results.length) return "";
+  return `<span class="ccr-calc-summary">= ${escapeHtml(results[0].result)}</span>`;
+}
+
+function calcDetailMarkup(item) {
+  const results = buildCalcResults(item);
+  if (!results.length) return "";
+  return `<div class="ccr-calc-list">
+    ${results.map(calcLine).join("")}
+  </div>`;
+}
+
+function calcLine(result) {
+  if (result.result) {
+    return `<code><span>${escapeHtml(result.property)}:</span> ${escapeHtml(result.variable)}=${escapeHtml(result.variableValue)} <em>${escapeHtml(result.substituted)} = ${escapeHtml(result.result)}</em></code>`;
+  }
+  return `<code><span>${escapeHtml(result.property)}:</span> ${escapeHtml(result.substituted)} <em>${escapeHtml(result.note)}</em></code>`;
+}
+
+function buildCalcResults(item) {
+  const declarations = declarationMap(item.cssText);
+  const results = [];
+  declarations.forEach((value, property) => {
+    const calc = parseSupportedCalc(value);
+    if (!calc) return;
+    const resolved = resolveCssVariable(calc.variable, item, calc.fallback);
+    if (!resolved.value) {
+      results.push({
+        property,
+        substituted: value,
+        note: "variable unresolved",
+      });
+      return;
+    }
+
+    const substituted = `calc(${resolved.value} * ${formatNumber(calc.multiplier)})`;
+    const numeric = multiplyCssValue(resolved.value, calc.multiplier);
+    results.push({
+      property,
+      variable: calc.variable,
+      variableValue: resolved.value,
+      substituted,
+      result: numeric,
+      note: numeric ? resolved.source : "substituted only",
+    });
+  });
+  return results;
+}
+
+function parseSupportedCalc(value) {
+  const trimmed = value.trim();
+  let match = trimmed.match(/^calc\(\s*var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,\s*([^)]+))?\)\s*\*\s*(-?\d*\.?\d+)\s*\)$/);
+  if (match) return { variable: match[1], fallback: match[2]?.trim() || null, multiplier: Number(match[3]) };
+
+  match = trimmed.match(/^calc\(\s*(-?\d*\.?\d+)\s*\*\s*var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,\s*([^)]+))?\)\s*\)$/);
+  if (match) return { variable: match[2], fallback: match[3]?.trim() || null, multiplier: Number(match[1]) };
+  return null;
+}
+
+function resolveCssVariable(name, item, fallback = null) {
+  const localValue = declarationMap(item.cssText).get(name);
+  if (localValue) return { value: localValue, source: "this class" };
+
+  const rootValue = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (rootValue) return { value: rootValue, source: ":root" };
+
+  const provider = (state.varProviders.get(name) || []).find((entry) => entry.name !== item.name);
+  if (provider) return { value: provider.value, source: provider.name };
+
+  if (fallback) return { value: fallback, source: "fallback" };
+  return { value: "", source: "unresolved" };
+}
+
+function multiplyCssValue(value, multiplier) {
+  const match = value.trim().match(/^(-?\d*\.?\d+)([A-Za-z%]+)$/);
+  if (!match || Number.isNaN(multiplier)) return "";
+  const next = Number(match[1]) * multiplier;
+  return `${formatNumber(next)}${match[2]}`;
+}
+
+function formatNumber(value) {
+  return Number.parseFloat(value.toFixed(6)).toString();
 }
 
 function previewMarkup(item, large = false) {
   const sizeClass = large ? " is-large" : "";
+  const valueMarkup = spacingValueMarkup(item);
   return `<div class="ccr-preview-canvas${sizeClass} is-${item.previewType}">
-    ${previewContent(item)}
-  </div>`;
+    ${previewContent(item, large)}
+  </div>${valueMarkup}`;
 }
 
-function previewContent(item) {
+function previewContent(item, large = false) {
   const style = previewStyle(item);
   if (item.previewType === "no-preview" || item.previewType === "state-preview") {
     return `<div class="ccr-preview-note">${escapeHtml(item.previewType === "state-preview" ? "需要互動狀態" : "無靜態預覽")}</div>`;
   }
   if (item.previewType === "position-preview") {
-    return `<div class="ccr-preview-frame"><div class="ccr-preview-origin" aria-hidden="true"></div><div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div></div>`;
+    return `<div class="ccr-preview-frame">
+      <div class="ccr-preview-origin ccr-position-origin" style="${escapeHtml(positionOriginStyle(style))}" aria-hidden="true">Item</div>
+      <div class="ccr-preview-subject ccr-position-subject" style="${escapeHtml(style)}">Item</div>
+    </div>`;
   }
   if (item.previewType === "spacing-preview") {
-    return `<div class="ccr-spacing-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Space</div></div>`;
+    return spacingPreviewMarkup(item, style, large);
   }
   if (item.previewType === "typography-preview") {
-    return `<p class="ccr-preview-subject ccr-text-sample" style="${escapeHtml(style)}">Caveduck text sample that can overflow</p>`;
+    return `<p class="ccr-preview-subject ccr-text-sample" style="${escapeHtml(style)}">Item text sample that can overflow</p>`;
   }
   if (item.previewType === "layout-preview") {
     return `<div class="ccr-preview-subject ccr-layout-sample" style="${escapeHtml(style)}"><span>A</span><span>B</span><span>C</span></div>`;
   }
   if (item.previewType === "effect-preview") {
-    return `<div class="ccr-effect-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Effect</div></div>`;
+    return `<div class="ccr-effect-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div></div>`;
   }
-  return `<div class="ccr-preview-subject" style="${escapeHtml(style)}">Preview</div>`;
+  return `<div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div>`;
+}
+
+function spacingPreviewMarkup(item, style, large) {
+  const model = spacingModel(item);
+  if (model.kind === "gap") {
+    return `<div class="ccr-spacing-frame"><div class="ccr-preview-subject ccr-layout-sample" style="${escapeHtml(style)}"><span>A</span><span>B</span><span>C</span></div></div>`;
+  }
+  return `<div class="ccr-spacing-frame">
+    <div class="ccr-preview-origin ccr-spacing-origin is-${model.kind} ${model.negative ? "is-negative" : "is-positive"} side-${model.side}" style="--ccr-margin-size: ${model.strength}px">
+      <div class="ccr-margin-fill" aria-hidden="true"></div>
+      <div class="ccr-margin-ghost" style="${escapeHtml(marginZeroStyle(style))}" aria-hidden="true">Item</div>
+      <div class="ccr-preview-subject ccr-margin-subject" style="${escapeHtml(spacingSubjectStyle(style))}">Item</div>
+    </div>
+  </div>`;
+}
+
+function spacingValueMarkup(item) {
+  if (item.previewType !== "spacing-preview" && item.previewType !== "position-preview") return "";
+  if (item.previewType === "spacing-preview") {
+    const model = spacingModel(item);
+    if (model.kind === "gap") return "";
+    return `<span class="ccr-box-value">${escapeHtml(model.valueLabel)}</span>`;
+  }
+
+  const result = buildCalcResults(item).find((entry) => entry.result);
+  if (!result) return "";
+  return `<span class="ccr-box-value">${escapeHtml(result.result)}</span>`;
+}
+
+function spacingModel(item) {
+  const declarations = declarationMap(item.cssText);
+  const gapEntry = firstDeclaration(declarations, /^(gap|row-gap|column-gap)$/);
+  if (gapEntry) return { kind: "gap", strength: 0, negative: false };
+
+  const marginEntry = firstDeclaration(declarations, /^margin/);
+  const paddingEntry = firstDeclaration(declarations, /^padding/);
+  const entry = marginEntry || paddingEntry;
+  const value = entry ? entry[1] : "";
+  const calc = parseSupportedCalc(value);
+  const resolved = calc ? resolveCssVariable(calc.variable, item, calc.fallback) : null;
+  const result = calc && resolved?.value ? multiplyCssValue(resolved.value, calc.multiplier) : value;
+  const property = entry ? entry[0] : "";
+  const side = spacingSide(property);
+  const negative = /^-/.test(String(result).trim());
+  const strength = Math.max(2, Math.min(28, cssPixelMagnitude(result)));
+  return {
+    kind: marginEntry ? "margin" : "padding",
+    side,
+    negative,
+    strength,
+    valueLabel: result || value,
+  };
+}
+
+function spacingSide(property) {
+  if (/-(top|block-start)$/.test(property)) return "top";
+  if (/-(right|inline-end)$/.test(property)) return "right";
+  if (/-(bottom|block-end)$/.test(property)) return "bottom";
+  if (/-(left|inline-start)$/.test(property)) return "left";
+  if (/-inline$/.test(property)) return "inline";
+  if (/-block$/.test(property)) return "block";
+  return "all";
+}
+
+function firstDeclaration(declarations, pattern) {
+  return Array.from(declarations).find(([property]) => pattern.test(property));
+}
+
+function cssPixelMagnitude(value) {
+  const match = String(value).trim().match(/^-?(\d*\.?\d+)([A-Za-z%]*)/);
+  if (!match) return 8;
+  const amount = Math.abs(Number(match[1]));
+  const unit = match[2] || "px";
+  if (unit === "rem" || unit === "em") return amount * 16;
+  if (unit === "px") return amount;
+  return Math.min(24, amount * 12);
+}
+
+function marginZeroStyle(style) {
+  return `${spacingSubjectStyle(style)}; margin: 0; margin-inline: 0; margin-block: 0; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0`;
+}
+
+function spacingSubjectStyle(style) {
+  return `${style}; width: 46px; height: 28px`;
+}
+
+function positionOriginStyle(style) {
+  return `${style}; position: relative; inset: auto; top: auto; right: auto; bottom: auto; left: auto; translate: none; rotate: none; scale: none; transform: none`;
 }
 
 function previewStyle(item) {
@@ -639,7 +914,7 @@ function previewStyle(item) {
     "min-width: 44px",
     "min-height: 28px",
     "padding: 6px 10px",
-    "border: 1px dashed rgba(8, 127, 140, 0.34)",
+    "border: 1px solid rgba(8, 127, 140, 0.34)",
     "border-radius: 4px",
     "background-color: rgba(228, 246, 247, 0.9)",
     "color: #12313d",
