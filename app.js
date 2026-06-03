@@ -29,12 +29,29 @@ const usageOrder = [
   "易誤用",
 ];
 
+// 選擇器寫法分類（第三個側欄篩選器）
+const variantOrder = [
+  "All",
+  "一般",
+  "hover:",
+  "focus:",
+  "active:",
+  "disabled:",
+  "dark:",
+  "group-",
+  "peer-",
+  "aria-",
+  "responsive",
+  "其他 variant",
+];
+
 const state = {
   classes: [],
   families: new Map(),
   varProviders: new Map(),
   category: "All",
   usage: "All",
+  variantFilter: "All",
   page: 1,
   viewMode: "classes",
   query: "",
@@ -57,6 +74,8 @@ const els = {
   viewButtons: document.querySelectorAll("button[data-view-mode]"),
   viewLabel: document.querySelector("#viewLabel"),
   toast: document.querySelector("#toast"),
+  themeToggle: document.querySelector("#themeToggle"),
+  variantTabs: document.querySelector("#variantTabs"),
 };
 
 init();
@@ -72,6 +91,9 @@ async function init() {
     state.families = buildFamilies(state.classes);
     state.selected = state.classes[0] || null;
     document.body.dataset.previewBg = state.previewBg;
+    // Restore saved theme
+    const savedTheme = localStorage.getItem("ccr-theme");
+    if (savedTheme) document.documentElement.dataset.theme = savedTheme;
     bindEvents();
     render();
   } catch (error) {
@@ -85,6 +107,12 @@ function bindEvents() {
     state.query = event.target.value.trim().toLowerCase();
     state.page = 1;
     state.viewMode = "classes";
+    // 搜尋時重置三個篩選器
+    if (state.query) {
+      state.category = "All";
+      state.usage = "All";
+      state.variantFilter = "All";
+    }
     render();
   });
 
@@ -107,6 +135,18 @@ function bindEvents() {
       render();
     });
   });
+
+  if (els.themeToggle) {
+    els.themeToggle.addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme;
+      const isDark =
+        current === "dark" ||
+        (!current && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      const next = isDark ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("ccr-theme", next);
+    });
+  }
 
   document.addEventListener("click", (event) => {
     const copyButton = event.target.closest("[data-copy-value]");
@@ -175,6 +215,7 @@ function enrichClasses(items) {
         meta.requirements.join(" "),
         meta.riskTags.join(" "),
         meta.familyKey,
+        meta.variantKey,
       ]
         .join(" ")
         .toLowerCase(),
@@ -196,9 +237,10 @@ function buildMetadata(item) {
     requirements: detectRequirements(base, declarations, item.name, previewType),
     purpose: describePurpose(base, declarations, item.name, previewType),
     exampleHtml: exampleHtmlFor(item.name, previewType, base),
-    inlineStyle: `style="${styleAttribute(item.cssText)}"`,
+    inlineStyle: styleAttribute(item.cssText),
     classSnippet: `class="${item.name}"`,
     familyKey: familyKeyFor(base, item.name),
+    variantKey: variantKeyFor(item.name),
   };
 }
 
@@ -288,6 +330,9 @@ function detectUsageTags(base, declarations, name, riskTags) {
   const tags = [];
   if (isCaveduckSpecific(name, declarations)) tags.push("Caveduck 特有");
   if (isMobileRisk(base, declarations)) tags.push("手機檢查");
+  // 含 : 的 class 是 variant（hover: / focus: / active: / dark: / sm: 等），
+  // group- / peer- / aria- 開頭的需要父層條件
+  if (name.includes(":") || /^(group|peer|aria)-/.test(base)) tags.push("選擇器變體");
   if (/^(font|text|leading|tracking|truncate|line-clamp|whitespace|break|prose|decoration|underline)/.test(base)) tags.push("文字排版");
   if (/^(bg|text|border|fill|stroke|accent|caret|from|via|to)-/.test(base) || hasDeclarationLike(declarations, /(color|background)/)) tags.push("色彩");
   if (/^(shadow|blur|backdrop|filter|opacity|rounded|border|gradient|animate|transition|rotate|scale|translate)/.test(base)) tags.push("裝飾");
@@ -312,7 +357,49 @@ function detectRequirements(base, declarations, name, previewType) {
   if (/^(truncate|text-ellipsis|line-clamp)/.test(base)) return ["需有寬度限制與 overflow 條件，文字超出時才看得出效果。"];
   if (/^(gap|space-[xy])/.test(base)) return ["需套在 flex / grid 或有多個子元素的容器上。"];
   if (previewType === "cursor-preview") return ["游標效果需在有游標的瀏覽平台上，將滑鼠移到 preview 元素上才看得到。"];
-  if (/^(hover):/.test(name) || /(^|:)hover:/.test(name)) return ["此 preview 直接模擬 hover 後的樣式；實際使用時仍需使用者滑鼠 hover 才會觸發。"];
+
+  // Variant 用法說明
+  if (/^hover:/.test(name)) return [
+    "寫在 class 屬性：class=\"hover:" + base + "\"",
+    "效果在滑鼠 hover 時觸發，靜態頁面無法預覽。",
+  ];
+  if (/^focus:/.test(name)) return [
+    "寫在 class 屬性：class=\"focus:" + base + "\"",
+    "效果在元素取得焦點（Tab / 點擊輸入框）時觸發。",
+  ];
+  if (/^active:/.test(name)) return [
+    "寫在 class 屬性：class=\"active:" + base + "\"",
+    "效果在滑鼠按下不放（active 狀態）時觸發。",
+  ];
+  if (/^disabled:/.test(name)) return [
+    "寫在 class 屬性：class=\"disabled:" + base + "\"",
+    "需要元素同時帶有 disabled 屬性才會套用。",
+  ];
+  if (/^(dark|light):/.test(name)) return [
+    "寫在 class 屬性：class=\"dark:" + base + "\"",
+    "依系統 / 手動切換的深淺色模式決定是否套用。",
+  ];
+  if (/^group-/.test(name)) return [
+    "父元素需有 class=\"group\"，本 class 才會在對應互動時觸發。",
+    "例：group-hover: 在父層被 hover 時套用。",
+  ];
+  if (/^peer-/.test(name)) return [
+    "同層前一個兄弟元素需有 class=\"peer\"，本 class 才會在對應互動時觸發。",
+    "例：peer-focus: 在兄弟元素聚焦時套用。",
+  ];
+  if (/^aria-/.test(name)) return [
+    "需對應元素帶有 aria-* 屬性並符合條件時才套用。",
+    "例：aria-checked: 在 aria-checked=\"true\" 時生效。",
+  ];
+  if (name.includes(":") && /^(sm|md|lg|xl|2xl):/.test(name)) return [
+    "響應式斷點 variant，只在特定螢幕寬度以上時套用。",
+    "Caveduck 環境不保證響應式 variant 完整支援，需自行確認。",
+  ];
+  if (name.includes(":")) return [
+    "此 class 為 variant 寫法，需在對應條件成立時才會生效。",
+    "寫在 class 屬性：class=\"" + name + "\"",
+  ];
+
   if (/^(group|peer|aria|focus|active|disabled)/.test(name) || previewType === "state-preview") return ["需要特定互動狀態、父層 class 或 ARIA/data 狀態才會觸發。"];
   if (previewType === "no-preview") return ["此 class 偏行為或瀏覽器狀態，通常無法用單一靜態方塊完整預覽。"];
   if (hasDeclarationLike(declarations, /var\(--tw-/)) return ["部分 Tailwind 組合變數需要搭配同系列 class 才會產生完整效果。"];
@@ -346,6 +433,21 @@ function exampleHtmlFor(className, previewType, base) {
     return `<div class="${className}">內容</div>`;
   }
   return `<span class="${className}">內容</span>`;
+}
+
+// 從 class name 提取選擇器寫法分類
+function variantKeyFor(name) {
+  if (/^hover:/.test(name)) return "hover:";
+  if (/^focus(-within|-visible)?:/.test(name) || /^focus:/.test(name)) return "focus:";
+  if (/^active:/.test(name)) return "active:";
+  if (/^disabled:/.test(name)) return "disabled:";
+  if (/^(dark|light):/.test(name)) return "dark:";
+  if (/^(sm|md|lg|xl|2xl):/.test(name)) return "responsive";
+  if (/^group/.test(name)) return "group-";
+  if (/^peer/.test(name)) return "peer-";
+  if (/^aria/.test(name)) return "aria-";
+  if (name.includes(":")) return "其他 variant";
+  return "一般";
 }
 
 function familyKeyFor(base, name) {
@@ -411,11 +513,69 @@ function styleAttribute(cssText) {
   return cssText.replace(/"/g, "&quot;");
 }
 
+// 複製片段基礎樣式：確保貼到任何地方都可見
+// class 的宣告寫在後面，會自動覆蓋基礎值（CSS inline 後者優先）
+const COPY_BASELINE = [
+  "display: inline-block",
+  "box-sizing: border-box",
+  "padding: 6px 12px",
+  "border: 1px solid rgba(0, 0, 0, 0.15)",  // 讓 border-* 有顏色/樣式底可覆蓋
+  "border-radius: 4px",
+  "background-color: rgba(240, 245, 247, 0.9)",
+  "color: #1b2430",
+  "font-size: 14px",
+  "line-height: 1.4",
+].join("; ");
+
+const COPY_CHILD_STYLE = "padding: 4px 8px; background: rgba(0,0,0,0.06); border-radius: 3px;";
+
+// 智慧決定複製片段：
+// - animation / variant class → 用 class=""（inline style 無法包含 @keyframes 或偽類）
+// - 其他 → baseline + class CSS，確保元素可見
+function inlineStyleExampleHtml(item) {
+  const css = item.cssText;
+  const base = stripVariants(item.name);
+  const dec = declarationMap(css);
+
+  const needsClass =
+    item.variantKey !== "一般" ||
+    hasDeclarationLike(dec, /^animation/) ||
+    hasDeclarationLike(dec, /^transition/);
+
+  if (needsClass) {
+    return `<span class="${item.name}" style="${COPY_BASELINE};">內容</span>`;
+  }
+
+  // baseline 在前，class CSS 在後 → class 的宣告自動覆蓋需要改的部分
+  const merged = `${COPY_BASELINE}; ${css}`;
+
+  if (item.previewType === "position-preview") {
+    return `<div style="position: relative; display: grid; place-items: center; width: 96px; height: 64px;">\n  <div style="${merged}">內容</div>\n</div>`;
+  }
+  if (item.previewType === "typography-preview") {
+    return `<p style="${merged}">這是一段 Caveduck 文字內容</p>`;
+  }
+  if (item.previewType === "layout-preview" && /^(flex|grid|gap|space)/.test(base)) {
+    return `<div style="${merged}">\n  <span style="${COPY_CHILD_STYLE}">A</span>\n  <span style="${COPY_CHILD_STYLE}">B</span>\n  <span style="${COPY_CHILD_STYLE}">C</span>\n</div>`;
+  }
+  if (
+    item.previewType === "spacing-preview" ||
+    item.previewType === "layout-preview" ||
+    item.previewType === "box-preview" ||
+    item.previewType === "effect-preview"
+  ) {
+    return `<div style="${merged}">內容</div>`;
+  }
+  return `<span style="${merged}">內容</span>`;
+}
+
 function render() {
   const categoryCounts = buildCounts("category");
   const usageCounts = buildCounts("usageCategory");
+  const variantCounts = buildCounts("variantKey");
   renderTabs(els.tabs, ["All", ...Array.from(categoryCounts.keys()).filter((key) => key !== "All").sort()], categoryCounts, "category");
   renderTabs(els.usageTabs, usageOrder, usageCounts, "usage");
+  renderTabs(els.variantTabs, variantOrder, variantCounts, "variantFilter");
   const filtered = getVisibleClasses();
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   if (state.page > totalPages) state.page = totalPages;
@@ -427,10 +587,22 @@ function render() {
   renderDetail();
 }
 
+// 計數依「其他兩個維度」cross-filter，讓 tab 數字反映點下去的實際結果
 function buildCounts(key) {
-  const counts = new Map([["All", state.classes.length]]);
-  state.classes.forEach((item) => {
-    const values = key === "usageCategory" ? item.usageTags : [item[key]];
+  const baseItems = state.classes.filter((item) => {
+    if (key !== "category" && state.category !== "All" && item.category !== state.category) return false;
+    if (key !== "usageCategory" && state.usage !== "All" && !item.usageTags.includes(state.usage)) return false;
+    if (key !== "variantKey" && state.variantFilter !== "All" && item.variantKey !== state.variantFilter) return false;
+    if (!state.query) return true;
+    const terms = state.query.split(/\s+/).filter(Boolean);
+    return terms.every((term) => item.searchText.includes(term));
+  });
+
+  const counts = new Map([["All", baseItems.length]]);
+  baseItems.forEach((item) => {
+    const values = key === "usageCategory" ? item.usageTags :
+                   key === "variantKey"    ? [item.variantKey] :
+                   [item[key]];
     values.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
   });
   return counts;
@@ -461,6 +633,7 @@ function getFilteredClasses() {
   return state.classes.filter((item) => {
     if (state.category !== "All" && item.category !== state.category) return false;
     if (state.usage !== "All" && !item.usageTags.includes(state.usage)) return false;
+    if (state.variantFilter !== "All" && item.variantKey !== state.variantFilter) return false;
     if (!terms.length) return true;
     return terms.every((term) => item.searchText.includes(term));
   });
@@ -555,20 +728,20 @@ function renderCompareList(items, start, end, total, totalPages) {
   });
 }
 
-  function compareCardMarkup(item, items = []) {
-    const selected = item === state.selected ? " is-selected" : "";
-    const layout = compareBoardLayout(item);
-    const orientation = comparePreviewClass(item);
-    const previewClass = layout === "grid" ? "is-grid" : orientation;
-    const actualSizeClass = isActualVerticalSizePreview(item, layout) ? " has-actual-size" : "";
-    const value = positionValueLabel(item) || sizeValueLabel(item) || "";
-    const cardStyle = compareCardStyle(item, items);
-    return `<article class="ccr-compare-card ${orientation} is-${layout}${actualSizeClass}${selected}" data-class="${escapeHtml(item.name)}"${cardStyle ? ` style="${escapeHtml(cardStyle)}"` : ""}>
-      <div class="ccr-compare-card-head">
-        <code class="ccr-class-name">${escapeHtml(item.name)}</code>
-        <button class="ccr-copy" type="button" data-copy-value="${escapeHtml(item.name)}" aria-label="Copy ${escapeHtml(item.name)}">
-          ${copyIcon()}
-        </button>
+function compareCardMarkup(item, items = []) {
+  const selected = item === state.selected ? " is-selected" : "";
+  const layout = compareBoardLayout(item);
+  const orientation = comparePreviewClass(item);
+  const previewClass = layout === "grid" ? "is-grid" : orientation;
+  const actualSizeClass = isActualVerticalSizePreview(item, layout) ? " has-actual-size" : "";
+  const value = positionValueLabel(item) || sizeValueLabel(item) || "";
+  const cardStyle = compareCardStyle(item, items);
+  return `<article class="ccr-compare-card ${orientation} is-${layout}${actualSizeClass}${selected}" data-class="${escapeHtml(item.name)}"${cardStyle ? ` style="${escapeHtml(cardStyle)}"` : ""}>
+    <div class="ccr-compare-card-head">
+      <code class="ccr-class-name">${escapeHtml(item.name)}</code>
+      <button class="ccr-copy" type="button" data-copy-value="${escapeHtml(item.name)}" aria-label="Copy ${escapeHtml(item.name)}">
+        ${copyIcon()}
+      </button>
     </div>
     <div class="ccr-compare-card-preview ${previewClass}">
       ${comparePreviewMarkup(item, layout)}
@@ -588,20 +761,20 @@ function compareBoardClass(items) {
   return `is-${layout}${scrollable}`;
 }
 
-  function compareBoardStyle(items) {
-    const selected = items.includes(state.selected) ? state.selected : items[0];
-    if (!selected || compareBoardLayout(selected) !== "vertical-overlay") return "";
-    if (compareKind(selected) === "size") {
-      const maxMagnitude = Math.max(...items.map(compareMagnitude), 0);
-      const frameHeight = Math.max(0, Math.round(maxMagnitude));
-      const previewHeight = frameHeight + 30;
-      return `align-items: stretch; --ccr-compare-head-height: 52px; --ccr-compare-preview-height: ${previewHeight}px; --ccr-compare-frame-height: ${frameHeight}px`;
-    }
+function compareBoardStyle(items) {
+  const selected = items.includes(state.selected) ? state.selected : items[0];
+  if (!selected || compareBoardLayout(selected) !== "vertical-overlay") return "";
+  if (compareKind(selected) === "size") {
     const maxMagnitude = Math.max(...items.map(compareMagnitude), 0);
-    const frameHeight = Math.max(190, Math.min(290, Math.ceil(maxMagnitude * 0.9 + 130)));
+    const frameHeight = Math.max(0, Math.round(maxMagnitude));
     const previewHeight = frameHeight + 30;
     return `align-items: stretch; --ccr-compare-head-height: 52px; --ccr-compare-preview-height: ${previewHeight}px; --ccr-compare-frame-height: ${frameHeight}px`;
   }
+  const maxMagnitude = Math.max(...items.map(compareMagnitude), 0);
+  const frameHeight = Math.max(190, Math.min(290, Math.ceil(maxMagnitude * 0.9 + 130)));
+  const previewHeight = frameHeight + 30;
+  return `align-items: stretch; --ccr-compare-head-height: 52px; --ccr-compare-preview-height: ${previewHeight}px; --ccr-compare-frame-height: ${frameHeight}px`;
+}
 
 function selectClass(name) {
   state.selected = state.classes.find((item) => item.name === name) || state.selected;
@@ -637,6 +810,13 @@ function renderDetail() {
       </div>
       <code class="ccr-code-block">${escapeHtml(item.cssText)}</code>
       ${calcDetailMarkup(item)}
+    </section>
+    <section class="ccr-detail-section">
+      <div class="ccr-section-heading">
+        <h3>複製片段</h3>
+        <button class="ccr-section-copy" type="button" data-copy-value="${escapeHtml(inlineStyleExampleHtml(item))}" aria-label="Copy snippet">${copyIcon()}</button>
+      </div>
+      <code class="ccr-code-block">${escapeHtml(inlineStyleExampleHtml(item))}</code>
     </section>
     <section class="ccr-detail-section">
       <h3>Variable values</h3>
@@ -697,14 +877,22 @@ function applyTagFilter(tag) {
   if (categories.has(tag)) {
     state.category = tag;
     state.usage = "All";
+    state.variantFilter = "All";
     state.query = "";
   } else if (usageOrder.includes(tag)) {
     state.usage = tag;
     state.category = "All";
+    state.variantFilter = "All";
+    state.query = "";
+  } else if (variantOrder.includes(tag) && tag !== "All") {
+    state.variantFilter = tag;
+    state.category = "All";
+    state.usage = "All";
     state.query = "";
   } else {
     state.category = "All";
     state.usage = "All";
+    state.variantFilter = "All";
     state.query = tag.toLowerCase();
   }
   els.search.value = state.query;
@@ -872,16 +1060,16 @@ function formatNumber(value) {
   return Number.parseFloat(value.toFixed(6)).toString();
 }
 
-  function previewMarkup(item, large = false) {
-    const sizeClass = large ? " is-large" : "";
-    const explicitSizeClass = hasExplicitPreviewSize(item) ? " has-explicit-size" : "";
-    const compareSizeClass = isCompareSizePreview(item) ? " is-size-preview" : "";
-    const objectClass = hasObjectPreview(item) ? " is-object-preview" : "";
-    const valueMarkup = spacingValueMarkup(item);
-    return `<div class="ccr-preview-canvas${sizeClass}${explicitSizeClass}${compareSizeClass}${objectClass} is-${item.previewType}">
-      ${previewContent(item, large)}
-    </div>${valueMarkup}`;
-  }
+function previewMarkup(item, large = false) {
+  const sizeClass = large ? " is-large" : "";
+  const explicitSizeClass = hasExplicitPreviewSize(item) ? " has-explicit-size" : "";
+  const compareSizeClass = isCompareSizePreview(item) ? " is-size-preview" : "";
+  const objectClass = hasObjectPreview(item) ? " is-object-preview" : "";
+  const valueMarkup = spacingValueMarkup(item);
+  return `<div class="ccr-preview-canvas${sizeClass}${explicitSizeClass}${compareSizeClass}${objectClass} is-${item.previewType}">
+    ${previewContent(item, large)}
+  </div>${valueMarkup}`;
+}
 
 function hasExplicitPreviewSize(item) {
   const declarations = declarationMap(item.cssText);
@@ -927,19 +1115,30 @@ function previewContent(item, large = false) {
     return `<div class="ccr-cursor-frame"><div class="ccr-preview-subject ccr-cursor-sample" style="${escapeHtml(style)}">Cursor</div><span>游標平台限定</span></div>`;
   }
   if (item.previewType === "effect-preview") {
+    // 含 animation 的 class 需要 @keyframes，不能 inline → 直接套用 class 讓動畫實際運作
+    const effectDec = declarationMap(item.cssText);
+    if (hasDeclarationLike(effectDec, /^animation/) && item.variantKey === "一般") {
+      const baseStyle = [
+        "display: inline-flex", "align-items: center", "justify-content: center",
+        "min-width: 44px", "min-height: 28px", "padding: 6px 10px",
+        "border: 1px solid rgba(8, 127, 140, 0.34)", "border-radius: 4px",
+        "background-color: rgba(228, 246, 247, 0.9)", "color: #12313d", "font-size: 12px",
+      ].join("; ");
+      return `<div class="ccr-effect-frame"><div class="ccr-preview-subject ${escapeHtml(item.name)}" style="${escapeHtml(baseStyle)}">Item</div></div>`;
+    }
     return `<div class="ccr-effect-frame"><div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div></div>`;
   }
   return `<div class="ccr-preview-subject" style="${escapeHtml(style)}">Item</div>`;
 }
 
-  function sizePreviewMarkup(item, style, large = false) {
-    const metrics = sizePreviewMetrics(item, large);
-    const subjectStyle = sizeSubjectStyle(item, style, large, metrics);
-    const frameStyle = metrics.frameHeight ? ` style="${escapeHtml(`height: ${metrics.frameHeight}px; min-height: ${metrics.frameHeight}px`)}"` : "";
-    return `<div class="ccr-compare-size-frame"${frameStyle}>
-      <div class="ccr-preview-subject ccr-compare-size-subject is-measure-block" aria-hidden="true" style="${escapeHtml(subjectStyle)}"></div>
-    </div>`;
-  }
+function sizePreviewMarkup(item, style, large = false) {
+  const metrics = sizePreviewMetrics(item, large);
+  const subjectStyle = sizeSubjectStyle(item, style, large, metrics);
+  const frameStyle = metrics.frameHeight ? ` style="${escapeHtml(`height: ${metrics.frameHeight}px; min-height: ${metrics.frameHeight}px`)}"` : "";
+  return `<div class="ccr-compare-size-frame"${frameStyle}>
+    <div class="ccr-preview-subject ccr-compare-size-subject is-measure-block" aria-hidden="true" style="${escapeHtml(subjectStyle)}"></div>
+  </div>`;
+}
 
 function spacingPreviewMarkup(item, style, large) {
   const model = spacingModel(item);
@@ -1065,64 +1264,63 @@ function compareMagnitude(item) {
   return cssPixelMagnitude(label);
 }
 
-  function compareCardStyle(item, items) {
-    if (!isActualVerticalSizePreview(item, compareBoardLayout(item))) return "";
-    const metrics = sizePreviewMetrics(item, true);
-    return `--ccr-item-frame-height: ${metrics.frameHeight}px`;
+function compareCardStyle(item, items) {
+  if (!isActualVerticalSizePreview(item, compareBoardLayout(item))) return "";
+  const metrics = sizePreviewMetrics(item, true);
+  return `--ccr-item-frame-height: ${metrics.frameHeight}px`;
+}
+
+function sizeSubjectStyle(item, style, large = false, metrics = null) {
+  const declarations = declarationMap(item.cssText);
+  const vertical = hasDeclarationLike(declarations, /^(height|min-height|max-height)$/) || /^(h|min-h|max-h)-/.test(stripVariants(item.name));
+  const ratioStyle = compareSizeSubjectStyle(item, large, vertical, metrics || sizePreviewMetrics(item, large));
+  const baseStyle = stripSizeDeclarations(style);
+  if (!ratioStyle) return baseStyle;
+  return baseStyle ? `${baseStyle}; ${ratioStyle}` : ratioStyle;
+}
+
+function compareSizeSubjectStyle(item, large, vertical, metrics) {
+  const frameHeight = metrics?.frameHeight ?? (large ? 420 : 290);
+  const frameWidth = large ? 240 : 72;
+  const subjectExtent = metrics?.subjectExtent ?? compareMagnitude(item);
+  if (vertical) {
+    return `width: 100%; min-height: 0; max-height: none; height: ${subjectExtent}px`;
   }
+  const inCompareFamily = state.viewMode === "compare" && state.selected?.familyKey === item.familyKey;
+  const visible = inCompareFamily ? getVisibleClasses() : [item];
+  const maxMagnitude = Math.max(...visible.map(compareMagnitude), 0);
+  const ratio = maxMagnitude > 0 ? subjectExtent / maxMagnitude : 1;
+  const horizontalExtent = Math.max(52, Math.min(frameWidth, Math.round(frameWidth * ratio)));
+  return `height: 100%; min-width: 0; max-width: none; width: ${horizontalExtent}px`;
+}
 
-    function sizeSubjectStyle(item, style, large = false, metrics = null) {
-      const declarations = declarationMap(item.cssText);
-      const vertical = hasDeclarationLike(declarations, /^(height|min-height|max-height)$/) || /^(h|min-h|max-h)-/.test(stripVariants(item.name));
-      const ratioStyle = compareSizeSubjectStyle(item, large, vertical, metrics || sizePreviewMetrics(item, large));
-      const baseStyle = stripSizeDeclarations(style);
-      if (!ratioStyle) return baseStyle;
-      return baseStyle ? `${baseStyle}; ${ratioStyle}` : ratioStyle;
-    }
+function stripSizeDeclarations(styleText) {
+  return String(styleText || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !/^(width|height|min-width|min-height|max-width|max-height)\s*:/.test(part))
+    .join("; ");
+}
 
-    function compareSizeSubjectStyle(item, large, vertical, metrics) {
-      const frameHeight = metrics?.frameHeight ?? (large ? 420 : 290);
-      const frameWidth = large ? 240 : 72;
-      const subjectExtent = metrics?.subjectExtent ?? compareMagnitude(item);
-      if (vertical) {
-        return `width: 100%; min-height: 0; max-height: none; height: ${subjectExtent}px`;
-      }
-      const inCompareFamily = state.viewMode === "compare" && state.selected?.familyKey === item.familyKey;
-      const visible = inCompareFamily ? getVisibleClasses() : [item];
-      const maxMagnitude = Math.max(...visible.map(compareMagnitude), 0);
-      const ratio = maxMagnitude > 0 ? subjectExtent / maxMagnitude : 1;
-      const horizontalExtent = Math.max(52, Math.min(frameWidth, Math.round(frameWidth * ratio)));
-      return `height: 100%; min-width: 0; max-width: none; width: ${horizontalExtent}px`;
-    }
-
-  function stripSizeDeclarations(styleText) {
-    return String(styleText || "")
-      .split(";")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .filter((part) => !/^(width|height|min-width|min-height|max-width|max-height)\s*:/.test(part))
-      .join("; ");
+function sizePreviewMetrics(item, large = false) {
+  const declarations = declarationMap(item.cssText);
+  const vertical = hasDeclarationLike(declarations, /^(height|min-height|max-height)$/) || /^(h|min-h|max-h)-/.test(stripVariants(item.name));
+  const actualVertical = vertical && (large || isActualVerticalSizePreview(item, compareBoardLayout(item)));
+  const magnitude = Math.max(0, Math.round(compareMagnitude(item)));
+  if (vertical) {
+    const subjectExtent = actualVertical ? magnitude : Math.max(34, Math.min(large ? 420 : 290, magnitude || 34));
+    const frameHeight = subjectExtent;
+    const previewHeight = frameHeight + 30;
+    return { vertical: true, frameHeight, previewHeight, subjectExtent };
   }
+  const subjectExtent = Math.max(52, Math.min(large ? 240 : 72, magnitude || 52));
+  return { vertical: false, frameHeight: large ? 84 : 32, previewHeight: large ? 128 : 48, subjectExtent };
+}
 
-    function sizePreviewMetrics(item, large = false) {
-      const declarations = declarationMap(item.cssText);
-      const vertical = hasDeclarationLike(declarations, /^(height|min-height|max-height)$/) || /^(h|min-h|max-h)-/.test(stripVariants(item.name));
-      const actualVertical = vertical && (large || isActualVerticalSizePreview(item, compareBoardLayout(item)));
-      const magnitude = Math.max(0, Math.round(compareMagnitude(item)));
-      if (vertical) {
-        const subjectExtent = actualVertical ? magnitude : Math.max(34, Math.min(large ? 420 : 290, magnitude || 34));
-        const frameHeight = subjectExtent;
-        const previewHeight = frameHeight + 30;
-        return { vertical: true, frameHeight, previewHeight, subjectExtent };
-      }
-      const subjectExtent = Math.max(52, Math.min(large ? 240 : 72, magnitude || 52));
-      return { vertical: false, frameHeight: large ? 84 : 32, previewHeight: large ? 128 : 48, subjectExtent };
-    }
-
-    function isActualVerticalSizePreview(item, layout = compareBoardLayout(item)) {
-      return layout === "vertical-overlay" && compareKind(item) === "size" && compareOrientation(item) === "vertical";
-    }
-
+function isActualVerticalSizePreview(item, layout = compareBoardLayout(item)) {
+  return layout === "vertical-overlay" && compareKind(item) === "size" && compareOrientation(item) === "vertical";
+}
 
 function spacingModel(item) {
   const declarations = declarationMap(item.cssText);
@@ -1163,23 +1361,23 @@ function firstDeclaration(declarations, pattern) {
   return Array.from(declarations).find(([property]) => pattern.test(property));
 }
 
-  function cssPixelMagnitude(value) {
-    const match = String(value).trim().match(/^-?(\d*\.?\d+)([A-Za-z%]*)/);
-    if (!match) return 8;
-    const amount = Math.abs(Number(match[1]));
-    const unit = match[2] || "px";
-    if (unit === "rem" || unit === "em") return amount * 16;
-    if (unit === "px") return amount;
-    if (unit === "vw" || unit === "svw" || unit === "dvw") {
-      const viewportWidth = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
-      return viewportWidth ? (viewportWidth * amount) / 100 : amount * 12;
-    }
-    if (unit === "vh" || unit === "svh" || unit === "dvh") {
-      const viewportHeight = typeof window !== "undefined" ? window.innerHeight || 0 : 0;
-      return viewportHeight ? (viewportHeight * amount) / 100 : amount * 12;
-    }
-    return Math.min(24, amount * 12);
+function cssPixelMagnitude(value) {
+  const match = String(value).trim().match(/^-?(\d*\.?\d+)([A-Za-z%]*)/);
+  if (!match) return 8;
+  const amount = Math.abs(Number(match[1]));
+  const unit = match[2] || "px";
+  if (unit === "rem" || unit === "em") return amount * 16;
+  if (unit === "px") return amount;
+  if (unit === "vw" || unit === "svw" || unit === "dvw") {
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
+    return viewportWidth ? (viewportWidth * amount) / 100 : amount * 12;
   }
+  if (unit === "vh" || unit === "svh" || unit === "dvh") {
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight || 0 : 0;
+    return viewportHeight ? (viewportHeight * amount) / 100 : amount * 12;
+  }
+  return Math.min(24, amount * 12);
+}
 
 function marginZeroStyle(style) {
   return `${spacingSubjectStyle(style)}; margin: 0; margin-inline: 0; margin-block: 0; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0`;
@@ -1202,30 +1400,16 @@ function hasObjectPreview(item) {
 function objectPreviewConfig(item) {
   const base = stripVariants(item.name);
   if (base === "object-contain") {
-    return {
-      backgroundSize: "auto 100%",
-      label: "完整顯示",
-    };
+    return { backgroundSize: "auto 100%", label: "完整顯示" };
   }
   if (base === "object-cover") {
-    return {
-      backgroundSize: "100% auto",
-      label: "填滿裁切",
-    };
+    return { backgroundSize: "100% auto", label: "填滿裁切" };
   }
   if (base === "object-center") {
-    return {
-      backgroundSize: "100% auto",
-      backgroundPosition: "center center",
-      label: "基底：object-cover",
-    };
+    return { backgroundSize: "100% auto", backgroundPosition: "center center", label: "基底：object-cover" };
   }
   if (base === "object-top") {
-    return {
-      backgroundSize: "100% auto",
-      backgroundPosition: "center top",
-      label: "基底：object-cover",
-    };
+    return { backgroundSize: "100% auto", backgroundPosition: "center top", label: "基底：object-cover" };
   }
 
   const declarations = declarationMap(item.cssText);

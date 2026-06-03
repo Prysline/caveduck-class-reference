@@ -23,7 +23,7 @@
         <div class="ccr-bg-control" aria-label="Preview background">
           <button class="is-active" type="button" data-preview-bg="checker">
             <span class="ccr-bg-swatch is-checker"></span>
-            <span>透明</span>
+            <span>透明 </span>
           </button>
           <button type="button" data-preview-bg="white">
             <span class="ccr-bg-swatch is-white"></span>
@@ -31,9 +31,25 @@
           </button>
           <button type="button" data-preview-bg="background">
             <span class="ccr-bg-swatch is-background"></span>
-            <span>背景</span>
+            <span>背景 background</span>
           </button>
         </div>
+        <button id="themeToggle" class="ccr-theme-toggle" type="button" aria-label="切換深色模式">
+          <svg class="ccr-icon-moon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg class="ccr-icon-sun" aria-hidden="true" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
         <div class="ccr-status" aria-live="polite">
           <strong id="resultCount">0</strong>
           <span>classes</span>
@@ -48,7 +64,25 @@
           </div>
           <div class="ccr-filter-block">
             <h2>CSS 分類</h2>
-          <nav id="categoryTabs" class="ccr-tabs"></nav>
+            <nav id="categoryTabs" class="ccr-tabs"></nav>
+          </div>
+          <div class="ccr-filter-block">
+            <h2>選擇器寫法</h2>
+            <details class="ccr-variant-info">
+              <summary>寫法差異說明 ▸</summary>
+              <div class="ccr-variant-desc">
+                <p><strong>一般</strong> — 直接加在 <code>class=""</code>，永遠生效。<br><code>&lt;span class="bg-duck-primary"&gt;</code></p>
+                <p><strong>hover:</strong> — 滑鼠移入時觸發。<br><code>&lt;span class="hover:opacity-80"&gt;</code></p>
+                <p><strong>focus:</strong> — 鍵盤 Tab 或點擊輸入框聚焦時觸發。</p>
+                <p><strong>active:</strong> — 滑鼠按下未放開時觸發。</p>
+                <p><strong>disabled:</strong> — 元素帶有 <code>disabled</code> 屬性時觸發。</p>
+                <p><strong>dark:</strong> — 系統或手動切換到深色模式時觸發。</p>
+                <p><strong>group- / peer-</strong> — 需父層 / 前一兄弟元素分別帶有 <code>class="group"</code> / <code>class="peer"</code>，才能在對應互動時觸發。<br><code>&lt;div class="group"&gt;&lt;span class="group-hover:text-white"&gt;</code></p>
+                <p><strong>aria-</strong> — 元素帶有對應 aria-* 屬性且符合條件時觸發。</p>
+                <p><strong>responsive</strong> — sm: / md: / lg: 等斷點 variant，超過指定螢幕寬度才生效。</p>
+              </div>
+            </details>
+            <nav id="variantTabs" class="ccr-tabs ccr-tabs-compact"></nav>
           </div>
         </aside>
 
