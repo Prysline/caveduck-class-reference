@@ -113,6 +113,12 @@ function bindEvents() {
       state.usage = "All";
       state.variantFilter = "All";
     }
+
+    // 綁定手機版關閉視窗功能
+    document.getElementById('closeDetailBtn')?.addEventListener('click', () => {
+      document.querySelector('.ccr-detail')?.classList.remove('is-active');
+    });
+
     render();
   });
 
@@ -826,6 +832,9 @@ function renderDetail() {
       <h3>同系列</h3>
       ${familyMarkup(item)}
     </section>`;
+
+  // 在 renderDetail 的最後面加上
+  document.querySelector('.ccr-detail')?.classList.add('is-active');
 }
 
 function listMarkup(items) {
