@@ -1667,7 +1667,10 @@ body[data-preview-bg="background"] .ccr-compare-card-preview {
 }
 
 /* ─── Object frame dark adaptation ─── */
-[data-theme="dark"] .ccr-object-frame,
+[data-theme="dark"] .ccr-object-frame {
+  background: rgba(0, 0, 0, 0.3);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .ccr-object-frame { background: rgba(0, 0, 0, 0.3); }
 }
@@ -1925,12 +1928,12 @@ body[data-preview-bg="background"] .ccr-compare-card-preview {
     height: 85vh;
     background: var(--ccr-surface);
     /* 確保 z-index 夠高，高於原本可能固定在手機上方的 tabs */
-    z-index: 10000 !important; 
+    z-index: 10000 !important;
     box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.3);
     border-radius: 20px 20px 0 0;
     overflow-y: auto;
     padding: 20px 16px 40px !important;
-    
+
     transform: translateY(100%);
     /* ✨ 補上 opacity 的過渡，讓動效更平滑 */
     transition: transform 0.3s cubic-bezier(0.1, 0.76, 0.55, 0.94), opacity 0.3s ease;
@@ -1942,7 +1945,7 @@ body[data-preview-bg="background"] .ccr-compare-card-preview {
   .ccr-detail.is-active {
     transform: translateY(0);
     /* ✨ 確保激活時，滑鼠和手指點擊事件能夠 100% 被接收 */
-    pointer-events: all !important; 
+    pointer-events: all !important;
     opacity: 1;
   }
 

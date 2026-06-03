@@ -167,7 +167,7 @@ function bindEvents() {
       state.viewMode = "family";
       state.page = 1;
       render();
-      
+
       // 在手機版上，當點擊「同系列」的 class 換頁時，自動把視窗拉起來顯示內容
       if (window.innerWidth <= 760) {
         document.querySelector('.ccr-detail')?.classList.add('is-active');
@@ -790,7 +790,7 @@ function compareBoardStyle(items) {
 function selectClass(name) {
   state.selected = state.classes.find((item) => item.name === name) || state.selected;
   renderDetail();
-  
+
   els.list.querySelectorAll(".ccr-row").forEach((row) => {
     row.classList.toggle("is-selected", row.dataset.class === name);
   });
